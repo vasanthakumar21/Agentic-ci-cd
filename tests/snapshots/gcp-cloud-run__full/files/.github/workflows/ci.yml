@@ -1,0 +1,126 @@
+name: full-svc CI
+"on":
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch: {}
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: SAST scan
+      run: echo 'run SAST scan'
+    - name: Secret scan
+      run: echo 'run secret scan'
+    - name: Dependency scan
+      run: echo 'run dependency scan'
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Authenticate to Google Cloud (OIDC)
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+    - name: test
+      run: |
+        echo 'Linting Dockerfile (gcp-cloud-run)'
+        if command -v hadolint >/dev/null 2>&1; then hadolint Dockerfile; else echo 'hadolint not found; skipping Dockerfile lint'; fi
+        make test
+    # retries=1 requested; GitHub Actions has no native job retry. Wire a step-level retry action (e.g. nick-fields/retry) if needed.
+  build:
+    name: build
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      AR_REPO: ${{ secrets.AR_REPO }}
+      GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+      IMAGE_NAME: ${{ secrets.IMAGE_NAME }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Authenticate to Google Cloud (OIDC)
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+    - name: build
+      run: |
+        echo 'Building container image (gcp-cloud-run)'
+        docker build -t eu-west-2-docker.pkg.dev/$GCP_PROJECT/$AR_REPO/$IMAGE_NAME:$IMAGE_TAG -f Dockerfile .
+        echo 'Pushing image to Google Artifact Registry (gcp-cloud-run)'
+        gcloud auth configure-docker eu-west-2-docker.pkg.dev --quiet
+        docker push eu-west-2-docker.pkg.dev/$GCP_PROJECT/$AR_REPO/$IMAGE_NAME:$IMAGE_TAG
+  deploy-dev:
+    name: deploy-dev
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      AR_REPO: ${{ secrets.AR_REPO }}
+      CLOUD_RUN_SERVICE: ${{ secrets.CLOUD_RUN_SERVICE }}
+      GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+      IMAGE_NAME: ${{ secrets.IMAGE_NAME }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+      READY: ${{ secrets.READY }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Authenticate to Google Cloud (OIDC)
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+    - name: deploy-dev
+      run: |
+        echo 'Deploying to Cloud Run (gcp-cloud-run)'
+        gcloud run deploy $CLOUD_RUN_SERVICE --image eu-west-2-docker.pkg.dev/$GCP_PROJECT/$AR_REPO/$IMAGE_NAME:$IMAGE_TAG --project $GCP_PROJECT --region eu-west-2 --platform managed --quiet
+        echo 'Verifying Cloud Run revision health (gcp-cloud-run)'
+        READY="$(gcloud run services describe $CLOUD_RUN_SERVICE --project $GCP_PROJECT --region eu-west-2 --platform managed --format='value(status.conditions.filter("type:Ready").firstof("status"))')"
+        echo "Cloud Run Ready condition: $READY"
+        test "$READY" = "True"
+        gcloud run services describe $CLOUD_RUN_SERVICE --project $GCP_PROJECT --region eu-west-2 --platform managed --format='value(status.url)'
+  deploy-prod:
+    name: deploy-prod
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    environment: prod
+    env:
+      AR_REPO: ${{ secrets.AR_REPO }}
+      CLOUD_RUN_SERVICE: ${{ secrets.CLOUD_RUN_SERVICE }}
+      GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+      IMAGE_NAME: ${{ secrets.IMAGE_NAME }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+      READY: ${{ secrets.READY }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Authenticate to Google Cloud (OIDC)
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+    - name: deploy-prod
+      run: |
+        echo 'Deploying to Cloud Run (gcp-cloud-run)'
+        gcloud run deploy $CLOUD_RUN_SERVICE --image eu-west-2-docker.pkg.dev/$GCP_PROJECT/$AR_REPO/$IMAGE_NAME:$IMAGE_TAG --project $GCP_PROJECT --region eu-west-2 --platform managed --quiet
+        echo 'Verifying Cloud Run revision health (gcp-cloud-run)'
+        READY="$(gcloud run services describe $CLOUD_RUN_SERVICE --project $GCP_PROJECT --region eu-west-2 --platform managed --format='value(status.conditions.filter("type:Ready").firstof("status"))')"
+        echo "Cloud Run Ready condition: $READY"
+        test "$READY" = "True"
+        gcloud run services describe $CLOUD_RUN_SERVICE --project $GCP_PROJECT --region eu-west-2 --platform managed --format='value(status.url)'

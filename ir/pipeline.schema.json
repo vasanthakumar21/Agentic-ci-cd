@@ -1,0 +1,252 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tekcor4/agentic-cicd-generator/ir/pipeline.schema.json",
+  "title": "CI/CD Generator IR (pipeline.yaml)",
+  "description": "Vendor-neutral Intermediate Representation for the agentic, platform-agnostic CI/CD generator. Names a ci_vendor and a target_platform independently; any valid combination is generatable. Unknown fields are rejected to enable fail-fast validation downstream (R1, R2, R3.1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "ci_vendor", "target_platform", "project", "stages"],
+  "properties": {
+    "version": {
+      "description": "IR schema version. Currently only version 1 is supported.",
+      "type": "integer",
+      "const": 1
+    },
+    "ci_vendor": {
+      "description": "Where the pipeline runs (CI-vendor axis, R3). Pluggable; enum reflects the v1 mapping table (design 8a).",
+      "type": "string",
+      "enum": ["github", "gitlab", "azure-devops", "bitbucket", "jenkins"]
+    },
+    "target_platform": {
+      "description": "What gets built and deployed (target-platform axis, R3). Pluggable; enum reflects the v1 mapping table (design 8b). Independent of ci_vendor.",
+      "type": "string",
+      "enum": ["aws-ecs", "aws-lambda", "aws-eks", "aws-glue", "aws-emr", "aws-stepfunctions", "aws-batch", "aws-sagemaker", "databricks", "azure-functions", "azure-aks", "azure-synapse", "azure-data-factory", "azure-container-apps", "kubernetes", "gcp-cloud-run", "gcp-gke", "gcp-dataproc", "gcp-dataflow"]
+    },
+    "project": {
+      "description": "Project identity.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "description": "Project / service name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "language": {
+          "description": "Primary language of the project (e.g. python, node, java). Optional; agent may infer during discovery.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "cloud": {
+      "description": "Cloud context, driven by target_platform. Optional; a documented default applies when omitted (R2.2).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider"],
+      "properties": {
+        "provider": {
+          "description": "Cloud provider.",
+          "type": "string",
+          "enum": ["aws", "azure", "gcp"]
+        },
+        "region": {
+          "description": "Cloud region (e.g. uksouth, eu-west-1).",
+          "type": "string",
+          "minLength": 1
+        },
+        "auth": {
+          "description": "Authentication mode. OIDC is preferred; keys are discouraged.",
+          "type": "string",
+          "enum": ["oidc", "keys"],
+          "default": "oidc"
+        }
+      }
+    },
+    "environments": {
+      "description": "Deployment environments and their gate/protection rules (R2). Order is not significant; stages reference environments by name.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "description": "Environment name (e.g. dev, staging, prod). Referenced by stages.environment.",
+            "type": "string",
+            "minLength": 1
+          },
+          "gate": {
+            "description": "Whether promotion into this environment is automatic or requires a manual gate.",
+            "type": "string",
+            "enum": ["auto", "manual"],
+            "default": "auto"
+          },
+          "protection": {
+            "description": "Branch/environment protection applied to this environment.",
+            "type": "string",
+            "enum": ["none", "required-approvals"],
+            "default": "none"
+          }
+        }
+      }
+    },
+    "stages": {
+      "description": "Ordered pipeline stages (R1/R2). Array order defines pipeline order. At least one stage is required.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id"],
+        "properties": {
+          "id": {
+            "description": "Unique stage identifier (e.g. test, security, build, deploy-prod).",
+            "type": "string",
+            "minLength": 1
+          },
+          "enabled": {
+            "description": "Whether this stage is emitted/run. Documented default: true (R2.2).",
+            "type": "boolean",
+            "default": true
+          },
+          "timeout_minutes": {
+            "description": "Maximum wall-clock minutes for the stage before it is cancelled.",
+            "type": "integer",
+            "minimum": 1
+          },
+          "retries": {
+            "description": "Number of automatic retries on failure. Default: 0.",
+            "type": "integer",
+            "minimum": 0,
+            "default": 0
+          },
+          "runs": {
+            "description": "Command the stage runs (e.g. 'make test'). Orchestration only; platform verbs supply the implementation (R4).",
+            "type": "string",
+            "minLength": 1
+          },
+          "scans": {
+            "description": "Security scans to run in this stage. Any subset of the supported scan types (R2.1).",
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": ["sast", "secrets", "dependency"]
+            }
+          },
+          "environment": {
+            "description": "Name of the environment this stage targets. Must match an entry under 'environments' (enforced by the validator, not the schema).",
+            "type": "string",
+            "minLength": 1
+          },
+          "when": {
+            "description": "Trigger mode for the stage. 'manual' requires an operator to proceed.",
+            "type": "string",
+            "enum": ["auto", "manual"],
+            "default": "auto"
+          },
+          "depends_on": {
+            "description": "Ids of stages that must run before this stage (design 11.3). Optional; when omitted/empty the declared array order remains the execution order (backward compatible). Each id must name a declared stage and the dependency graph must be acyclic (enforced by the core's stage-graph validator, not the schema).",
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "approvals": {
+            "description": "Approval requirements before the stage proceeds (R2.1).",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["required"],
+            "properties": {
+              "required": {
+                "description": "Number of required approvals.",
+                "type": "integer",
+                "minimum": 1
+              },
+              "from_group": {
+                "description": "Reviewer group name; resolved from local config (.cicd/*.local.yaml), never inlined.",
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "thresholds": {
+      "description": "Quality/performance gates (R2.1). Optional; documented defaults apply when omitted.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "coverage_min_percent": {
+          "description": "Minimum test-coverage percentage required to pass.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "max_build_minutes": {
+          "description": "Maximum allowed build time in minutes.",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "notifications": {
+      "description": "Notification configuration (R2.1). Optional.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recipients": {
+          "description": "Recipients to notify (e.g. email addresses).",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "promotion": {
+      "description": "Build-once / promote-across-environments configuration (design 11.6). Optional; when omitted behaviour is unchanged (backward compatible). When enabled, one build+package pair produces an immutable artifact reference and each environment in 'path' runs only deploy+verify consuming the SAME reference; the chosen target_platform plugin must declare the artifact_promotion capability (enforced by the core's capability gate, not the schema). Every name in 'path' must be a declared environment (enforced by the validator, not the schema).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact", "path"],
+      "properties": {
+        "enabled": {
+          "description": "Whether promotion is active. Documented default: true (R2.2).",
+          "type": "boolean",
+          "default": true
+        },
+        "artifact": {
+          "description": "Logical name of the promotable artifact (e.g. service-image). The reference itself (image digest / versioned object key) is resolved by-reference at package time; no value is inlined (R6).",
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "description": "Environments to promote through, in order. Either a list of declared environment names (e.g. [\"dev\", \"staging\", \"prod\"]) OR a 'dev -> staging -> prod' arrow string (normalised to a list by the validator). At least one environment is required.",
+          "oneOf": [
+            {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^\\s*[^>]+(\\s*->\\s*[^>]+)*\\s*$"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

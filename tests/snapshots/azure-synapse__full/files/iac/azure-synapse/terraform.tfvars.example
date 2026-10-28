@@ -1,0 +1,24 @@
+# Example tfvars for the azure-synapse backing infrastructure (generated).
+# Copy to terraform.tfvars and fill with your real (git-ignored) values.
+# NO secrets or real account specifics belong in the committed example (R6).
+
+location            = "eu-west-2"
+project_name        = "full-svc"
+resource_group_name = "full-svc-rg"
+
+# The EXISTING Synapse workspace the Spark pool + jobs belong to (referenced).
+synapse_workspace_name      = "full-svc-synapse"
+synapse_resource_group_name = "full-svc-synapse-rg"
+
+# Spark pool sizing (override as needed).
+spark_version = "3.4"
+node_size     = "Small"
+node_count    = 3
+
+# ADLS Gen2 filesystem for job artifacts/output.
+artifact_filesystem = "artifacts"
+
+# CI OIDC trust — scope the subject to your repo/branch.
+oidc_issuer_url = "https://token.actions.githubusercontent.com"
+oidc_subject    = "repo:your-org/your-repo:ref:refs/heads/main"
+oidc_audience   = "api://AzureADTokenExchange"

@@ -1,0 +1,10 @@
+{
+  "paths": [
+    ".github/workflows/ci.yml",
+    "dataproc/dataproc-batch.json",
+    "iac/gcp-dataproc/main.tf",
+    "iac/gcp-dataproc/outputs.tf",
+    "iac/gcp-dataproc/terraform.tfvars.example",
+    "iac/gcp-dataproc/variables.tf"
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "containerProperties": {
+    "executionRoleArn": "$BATCH_EXECUTION_ROLE",
+    "image": "$ECR_REPO:$IMAGE_TAG",
+    "networkConfiguration": {
+      "assignPublicIp": "ENABLED"
+    },
+    "resourceRequirements": [
+      {
+        "type": "VCPU",
+        "value": "1"
+      },
+      {
+        "type": "MEMORY",
+        "value": "2048"
+      }
+    ]
+  },
+  "jobDefinitionName": "$BATCH_JOB_DEFINITION",
+  "platformCapabilities": [
+    "FARGATE"
+  ],
+  "type": "container"
+}

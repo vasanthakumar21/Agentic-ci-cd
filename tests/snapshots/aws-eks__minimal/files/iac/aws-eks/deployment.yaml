@@ -1,0 +1,36 @@
+# Kubernetes Deployment for the aws-eks target (generated — design §11.9).
+#
+# Image and namespace are ${VAR} placeholders substituted at deploy time from
+# non-secret settings/references (R6) — no literal image, registry credential, or
+# namespace is committed. The pod runs under the IRSA ServiceAccount so it assumes
+# its scoped IAM role. Deterministic: stable key order, no timestamps (R5.3).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minimal-svc-deployment
+  namespace: ${NAMESPACE}
+  labels:
+    app: minimal-svc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minimal-svc
+  template:
+    metadata:
+      labels:
+        app: minimal-svc
+    spec:
+      serviceAccountName: minimal-svc-sa
+      containers:
+        - name: minimal-svc
+          image: ${IMAGE_REF}
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"

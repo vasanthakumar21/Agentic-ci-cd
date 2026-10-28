@@ -1,0 +1,86 @@
+name: minimal-svc CI
+"on":
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch: {}
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Azure login (OIDC)
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    - name: test
+      run: |
+        echo 'Linting Dockerfile (azure-aks)'
+        if command -v hadolint >/dev/null 2>&1; then hadolint Dockerfile; else echo 'hadolint not found; skipping Dockerfile lint'; fi
+        make test
+  build:
+    name: build
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+      ACR_NAME: ${{ secrets.ACR_NAME }}
+      IMAGE_NAME: ${{ secrets.IMAGE_NAME }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Azure login (OIDC)
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    - name: build
+      run: |
+        echo 'Building container image (azure-aks)'
+        docker build -t $ACR_LOGIN_SERVER/$IMAGE_NAME:$IMAGE_TAG -f Dockerfile .
+        echo 'Pushing image to Azure Container Registry (azure-aks)'
+        az acr login --name $ACR_NAME
+        docker push $ACR_LOGIN_SERVER/$IMAGE_NAME:$IMAGE_TAG
+  deploy-dev:
+    name: deploy-dev
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+      AKS_CLUSTER: ${{ secrets.AKS_CLUSTER }}
+      AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+      DEPLOYMENT_NAME: ${{ secrets.DEPLOYMENT_NAME }}
+      IMAGE_NAME: ${{ secrets.IMAGE_NAME }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+      KUBE_CONTEXT: ${{ secrets.KUBE_CONTEXT }}
+      NAMESPACE: ${{ secrets.NAMESPACE }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Azure login (OIDC)
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    - name: deploy-dev
+      run: |
+        echo 'Deploying to AKS (azure-aks)'
+        az aks get-credentials --name $AKS_CLUSTER --resource-group $AZURE_RESOURCE_GROUP --overwrite-existing
+        if [ -d chart ] && command -v helm >/dev/null 2>&1; then helm upgrade --install $DEPLOYMENT_NAME ./chart --namespace $NAMESPACE --create-namespace --kube-context $KUBE_CONTEXT --set image.repository=$ACR_LOGIN_SERVER/$IMAGE_NAME --set image.tag=$IMAGE_TAG; else export IMAGE_REF=$ACR_LOGIN_SERVER/$IMAGE_NAME:$IMAGE_TAG NAMESPACE=$NAMESPACE; envsubst < iac/azure-aks/serviceaccount.yaml | kubectl --context $KUBE_CONTEXT -n $NAMESPACE apply -f -; envsubst < iac/azure-aks/deployment.yaml | kubectl --context $KUBE_CONTEXT -n $NAMESPACE apply -f -; envsubst < iac/azure-aks/service.yaml | kubectl --context $KUBE_CONTEXT -n $NAMESPACE apply -f -; fi
+        echo 'Verifying AKS rollout (azure-aks)'
+        kubectl --context $KUBE_CONTEXT rollout status deployment/$DEPLOYMENT_NAME -n $NAMESPACE --timeout=300s
+        kubectl --context $KUBE_CONTEXT get deployment/$DEPLOYMENT_NAME -n $NAMESPACE -o wide

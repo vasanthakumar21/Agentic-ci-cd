@@ -1,0 +1,9 @@
+{
+  "paths": [
+    ".github/workflows/ci.yml",
+    "iac/aws-lambda/main.tf",
+    "iac/aws-lambda/outputs.tf",
+    "iac/aws-lambda/terraform.tfvars.example",
+    "iac/aws-lambda/variables.tf"
+  ]
+}

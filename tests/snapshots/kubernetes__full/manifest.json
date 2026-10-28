@@ -1,0 +1,12 @@
+{
+  "paths": [
+    ".github/workflows/ci.yml",
+    "Dockerfile",
+    "iac/kubernetes/deployment.yaml",
+    "iac/kubernetes/main.tf",
+    "iac/kubernetes/outputs.tf",
+    "iac/kubernetes/service.yaml",
+    "iac/kubernetes/terraform.tfvars.example",
+    "iac/kubernetes/variables.tf"
+  ]
+}

@@ -1,0 +1,128 @@
+name: full-svc CI
+"on":
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch: {}
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: SAST scan
+      run: echo 'run SAST scan'
+    - name: Secret scan
+      run: echo 'run secret scan'
+    - name: Dependency scan
+      run: echo 'run dependency scan'
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Azure login (OIDC)
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    - name: test
+      run: |
+        echo 'Linting Synapse notebooks/Spark scripts/python (azure-synapse)'
+        if command -v ruff >/dev/null 2>&1; then ruff check .; else echo 'ruff not found; skipping python lint'; fi
+        make test
+    # retries=1 requested; GitHub Actions has no native job retry. Wire a step-level retry action (e.g. nick-fields/retry) if needed.
+  build:
+    name: build
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MAIN: ${{ secrets.MAIN }}
+      SYNAPSE_FILESYSTEM: ${{ secrets.SYNAPSE_FILESYSTEM }}
+      SYNAPSE_STORAGE_ACCOUNT: ${{ secrets.SYNAPSE_STORAGE_ACCOUNT }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Azure login (OIDC)
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    - name: build
+      run: |
+        echo 'Building Synapse artifact: wheel + Spark job defs/notebooks (NO image)'
+        rm -rf .synapse_build
+        mkdir -p .synapse_build/notebooks .synapse_build/scripts
+        python -m build --wheel --outdir .synapse_build/
+        if [ -d spark_jobs ]; then cp -r spark_jobs/. .synapse_build/scripts/; else echo 'no spark_jobs/ dir; expecting a main file already in storage'; fi
+        if [ -d notebooks ]; then cp -r notebooks/. .synapse_build/notebooks/; else echo 'no notebooks/ dir; wheel + scripts only'; fi
+        echo 'Uploading Synapse artifacts to ADLS (azure-synapse) — no image push'
+        WHEEL="$(ls .synapse_build/*.whl | head -n1)"
+        az storage fs file upload --account-name $SYNAPSE_STORAGE_ACCOUNT --file-system $SYNAPSE_FILESYSTEM --auth-mode login --overwrite --source "$WHEEL" --path "artifacts/full_svc/full_svc.whl"
+        MAIN="$(ls .synapse_build/scripts/*.py 2>/dev/null | head -n1)"; if [ -n "$MAIN" ]; then az storage fs file upload --account-name $SYNAPSE_STORAGE_ACCOUNT --file-system $SYNAPSE_FILESYSTEM --auth-mode login --overwrite --source "$MAIN" --path "artifacts/full_svc/main.py"; else echo 'no local main file staged; assuming it is already in ADLS'; fi
+  deploy-dev:
+    name: deploy-dev
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      BATCH_ID: ${{ secrets.BATCH_ID }}
+      SYNAPSE_SPARK_POOL: ${{ secrets.SYNAPSE_SPARK_POOL }}
+      SYNAPSE_WORKSPACE: ${{ secrets.SYNAPSE_WORKSPACE }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Azure login (OIDC)
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    - name: deploy-dev
+      run: |
+        echo 'Deploying Synapse Spark job definition (create/update via CLI) — NO image'
+        EXISTING="$(az synapse spark-job-definition show --workspace-name $SYNAPSE_WORKSPACE --name full-svc-job --query 'name' --output tsv 2>/dev/null || true)"
+        if [ "$EXISTING" = "full-svc-job" ]; then az synapse spark-job-definition update --workspace-name $SYNAPSE_WORKSPACE --name full-svc-job --file @synapse/spark-job-definition.json; else az synapse spark-job-definition create --workspace-name $SYNAPSE_WORKSPACE --name full-svc-job --file @synapse/spark-job-definition.json; fi
+        echo 'Starting Synapse Spark job run and polling run state (azure-synapse)'
+        BATCH_ID="$(az synapse spark-job-definition start --workspace-name $SYNAPSE_WORKSPACE --name full-svc-job --query 'id' --output tsv)"
+        while true; do STATE="$(az synapse spark-job --workspace-name $SYNAPSE_WORKSPACE --spark-pool-name $SYNAPSE_SPARK_POOL show --livy-id "$BATCH_ID" --query 'state' --output tsv)"; if [ "$STATE" = "success" ] || [ "$STATE" = "dead" ] || [ "$STATE" = "killed" ] || [ "$STATE" = "error" ] || [ "$STATE" = "Succeeded" ] || [ "$STATE" = "Failed" ]; then break; fi; echo "job run state: $STATE; waiting..."; sleep 10; done
+        echo "job run final state: $STATE"; [ "$STATE" = "success" ] || [ "$STATE" = "Succeeded" ]
+  deploy-prod:
+    name: deploy-prod
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    environment: prod
+    env:
+      BATCH_ID: ${{ secrets.BATCH_ID }}
+      SYNAPSE_SPARK_POOL: ${{ secrets.SYNAPSE_SPARK_POOL }}
+      SYNAPSE_WORKSPACE: ${{ secrets.SYNAPSE_WORKSPACE }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Azure login (OIDC)
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    - name: deploy-prod
+      run: |
+        echo 'Deploying Synapse Spark job definition (create/update via CLI) — NO image'
+        EXISTING="$(az synapse spark-job-definition show --workspace-name $SYNAPSE_WORKSPACE --name full-svc-job --query 'name' --output tsv 2>/dev/null || true)"
+        if [ "$EXISTING" = "full-svc-job" ]; then az synapse spark-job-definition update --workspace-name $SYNAPSE_WORKSPACE --name full-svc-job --file @synapse/spark-job-definition.json; else az synapse spark-job-definition create --workspace-name $SYNAPSE_WORKSPACE --name full-svc-job --file @synapse/spark-job-definition.json; fi
+        echo 'Starting Synapse Spark job run and polling run state (azure-synapse)'
+        BATCH_ID="$(az synapse spark-job-definition start --workspace-name $SYNAPSE_WORKSPACE --name full-svc-job --query 'id' --output tsv)"
+        while true; do STATE="$(az synapse spark-job --workspace-name $SYNAPSE_WORKSPACE --spark-pool-name $SYNAPSE_SPARK_POOL show --livy-id "$BATCH_ID" --query 'state' --output tsv)"; if [ "$STATE" = "success" ] || [ "$STATE" = "dead" ] || [ "$STATE" = "killed" ] || [ "$STATE" = "error" ] || [ "$STATE" = "Succeeded" ] || [ "$STATE" = "Failed" ]; then break; fi; echo "job run state: $STATE; waiting..."; sleep 10; done
+        echo "job run final state: $STATE"; [ "$STATE" = "success" ] || [ "$STATE" = "Succeeded" ]

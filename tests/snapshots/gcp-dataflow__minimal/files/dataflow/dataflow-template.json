@@ -1,0 +1,9 @@
+{
+  "environment": {
+    "stagingLocation": "gs://$DATAFLOW_BUCKET/staging",
+    "tempLocation": "gs://$DATAFLOW_BUCKET/temp"
+  },
+  "jobName": "minimal-svc-job",
+  "parameters": {},
+  "templatePath": "gs://$DATAFLOW_BUCKET/$DATAFLOW_TEMPLATE_KEY"
+}

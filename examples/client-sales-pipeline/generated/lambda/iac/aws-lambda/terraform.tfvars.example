@@ -1,0 +1,23 @@
+# Example tfvars for the aws-lambda backing infrastructure (generated).
+# Copy to terraform.tfvars and fill with your real (git-ignored) values.
+# NO secrets or real account specifics belong in the committed example (R6).
+
+aws_region   = "ap-southeast-2"
+project_name = "sales-file-check"
+
+# Packaging: "Zip" (S3 artifact) or "Image" (ECR container image).
+package_type   = "Zip"
+lambda_runtime = "python3.12"
+lambda_handler = "app.handler"
+artifact_key   = "lambda/bootstrap.zip"
+
+# For package_type = "Image", set an immutable digest and leave the zip keys as-is:
+# package_type = "Image"
+# image_uri    = "ACCOUNT.dkr.ecr.REGION.amazonaws.com/REPO@sha256:REPLACE_ME"
+
+alias_name = "live"
+
+# CI OIDC trust — scope the subject to your repo/branch.
+oidc_provider_url = "https://token.actions.githubusercontent.com"
+oidc_subject      = "repo:your-org/your-repo:ref:refs/heads/main"
+oidc_client_id_list = ["sts.amazonaws.com"]

@@ -1,0 +1,83 @@
+name: minimal-svc CI
+"on":
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch: {}
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: us-east-1
+    - name: test
+      run: |
+        echo 'Linting Glue job scripts/python (aws-glue)'
+        if command -v ruff >/dev/null 2>&1; then ruff check .; else echo 'ruff not found; skipping python lint'; fi
+        make test
+  build:
+    name: build
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      GLUE_EXTRA_LIBS_KEY: ${{ secrets.GLUE_EXTRA_LIBS_KEY }}
+      GLUE_SCRIPT_BUCKET: ${{ secrets.GLUE_SCRIPT_BUCKET }}
+      GLUE_SCRIPT_KEY: ${{ secrets.GLUE_SCRIPT_KEY }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: us-east-1
+    - name: build
+      run: |
+        echo 'Building Glue job: scripts + extra python libs (NO image)'
+        echo 'Service source directory: .'
+        rm -rf .glue_build glue-extra-python-libs.zip
+        mkdir -p .glue_build/scripts .glue_build/libs
+        if [ -d ./glue_jobs ]; then cp -r ./glue_jobs/. .glue_build/scripts/; else echo 'no glue_jobs/ dir; expecting a script already in S3'; fi
+        if [ -f ./requirements.txt ]; then pip install --target .glue_build/libs -r ./requirements.txt; else echo 'no requirements.txt; skipping extra-py-files bundle'; fi
+        (cd .glue_build/libs && zip -r -X ../../glue-extra-python-libs.zip . -x '*.git*' -x '*.venv*')
+        echo 'Built Glue extra-py-files archive: glue-extra-python-libs.zip'
+        echo 'Uploading Glue scripts/libs to S3 (aws-glue) — no image push'
+        aws s3api put-object --bucket $GLUE_SCRIPT_BUCKET --key $GLUE_EXTRA_LIBS_KEY --body glue-extra-python-libs.zip --region $AWS_REGION
+        SCRIPT="$(ls .glue_build/scripts/*.py 2>/dev/null | head -n1)"; if [ -n "$SCRIPT" ]; then aws s3api put-object --bucket $GLUE_SCRIPT_BUCKET --key $GLUE_SCRIPT_KEY --body "$SCRIPT" --region $AWS_REGION; else echo 'no local script staged; assuming script already in S3'; fi
+  deploy-dev:
+    name: deploy-dev
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: us-east-1
+    - name: deploy-dev
+      run: |
+        echo 'Deploying Glue job (create/update via CLI) — NO ECS'
+        EXISTING="$(aws glue get-job --job-name minimal-svc-job --region $AWS_REGION --query 'Job.Name' --output text 2>/dev/null || true)"
+        if [ "$EXISTING" = "minimal-svc-job" ]; then aws glue update-job --job-name minimal-svc-job --region $AWS_REGION --job-update "$(python -c "import json,sys; spec=json.load(open('glue/glue-job.json')); spec.pop('Name', None); print(json.dumps(spec))")"; else aws glue create-job --region $AWS_REGION --cli-input-json "$(cat glue/glue-job.json)"; fi
+        echo 'Starting Glue job run and polling run state (aws-glue)'
+        RUN_ID="$(aws glue start-job-run --job-name minimal-svc-job --region $AWS_REGION --query 'JobRunId' --output text)"
+        while true; do STATE="$(aws glue get-job-run --job-name minimal-svc-job --run-id "$RUN_ID" --region $AWS_REGION --query 'JobRun.JobRunState' --output text)"; if [ "$STATE" = "SUCCEEDED" ] || [ "$STATE" = "FAILED" ] || [ "$STATE" = "TIMEOUT" ] || [ "$STATE" = "STOPPED" ] || [ "$STATE" = "ERROR" ]; then break; fi; echo "job run state: $STATE; waiting..."; sleep 10; done
+        echo "job run final state: $STATE"; [ "$STATE" = "SUCCEEDED" ]

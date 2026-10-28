@@ -1,0 +1,10 @@
+{
+  "paths": [
+    ".github/workflows/ci.yml",
+    "Dockerfile",
+    "iac/aws-ecs/main.tf",
+    "iac/aws-ecs/outputs.tf",
+    "iac/aws-ecs/terraform.tfvars.example",
+    "iac/aws-ecs/variables.tf"
+  ]
+}

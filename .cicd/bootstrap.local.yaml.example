@@ -1,0 +1,156 @@
+# =============================================================================
+# .cicd/bootstrap.local.yaml  —  COMMITTED EXAMPLE  (R6.4)
+# =============================================================================
+# This is the *documented template*. Copy it, drop the ".example" suffix, and
+# fill in real values:
+#
+#     cp .cicd/bootstrap.local.yaml.example .cicd/bootstrap.local.yaml
+#
+# The real `bootstrap.local.yaml` is git-ignored (see .gitignore: `.cicd/*.local.*`)
+# so it NEVER lands in version control.
+#
+# WHAT THIS FILE IS (R6.2):
+#   The non-generatable vendor / cloud WIRING the bootstrapper consumes — repo
+#   identity, OIDC trust, runner registration, reviewer groups, branch protection,
+#   and the per-target-platform wiring (ECR repo, Databricks workspace, etc.).
+#
+# WHAT THIS FILE IS NOT:
+#   It holds NO secret values. It lists secret NAMES only (see `secrets:` below);
+#   the actual values live in `secrets.local.yaml`. Admin/runner tokens are read
+#   from the ENVIRONMENT by name (`*_env` keys) and are never written here.
+#
+# HOW IT IS USED:
+#   - The generator references secrets by KEY only — e.g. `${{ secrets.ECR_REPO }}`
+#     on GitHub or `$(ECR_REPO)` on Azure DevOps — never the value (R6.3/R6.6).
+#   - The bootstrapper reads this file and, with your admin token, performs the
+#     vendor-side setup (push secrets, create OIDC trust, register runners, set
+#     branch protection). Dry-run by default (R7).
+#   - A missing REQUIRED key aborts bootstrap with a message naming the key (R6.5).
+#   - Values are never logged or echoed (R9.3).
+#
+# TWO INDEPENDENT AXES:
+#   This file must support ANY `ci_vendor` × `target_platform` combination the IR
+#   declares (github | azure-devops | … ) × (aws-ecs | databricks | …). Only fill
+#   the blocks relevant to the axes your `pipeline.yaml` selects; the rest may be
+#   omitted. The loader (task 4.2) validates that the keys REQUIRED by the chosen
+#   axes are present.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# repo — where the generated pipeline + IaC live (REQUIRED, all vendors)
+# -----------------------------------------------------------------------------
+repo:
+  owner: my-org                 # GitHub org/user, Azure DevOps org, GitLab group, …
+  name: my-service              # repository name
+  create_if_missing: false      # true = bootstrap may create the repo (gated by --apply)
+  default_branch: main          # branch that branch_protection below applies to
+  # host: github.com            # OPTIONAL: self-hosted/enterprise host (e.g. github.acme.com,
+                                #           dev.azure.com/my-org). Omit for the public SaaS host.
+
+
+# -----------------------------------------------------------------------------
+# vendor_admin — the one-time admin credential the bootstrapper uses (REQUIRED)
+# -----------------------------------------------------------------------------
+# The TOKEN VALUE is read from the named environment variable at bootstrap time,
+# NOT stored in this file (R6.6 / R9.3). Export it in your shell before running:
+#     export CICD_ADMIN_TOKEN=...      (GitHub PAT / Azure DevOps PAT / GitLab token)
+vendor_admin:
+  token_env: CICD_ADMIN_TOKEN   # name of the env var holding the admin PAT/token
+  # api_url: ""                 # OPTIONAL: override API base URL for enterprise/self-hosted
+
+
+# -----------------------------------------------------------------------------
+# oidc — keyless cloud auth from the pipeline (per cloud; fill what the target uses)
+# -----------------------------------------------------------------------------
+# Preferred over long-lived keys. The pipeline assumes a cloud role via OIDC; this
+# block describes the trust to create on the cloud side (via Terraform) and wire on
+# the vendor side. Populate the sub-block(s) for the cloud(s) your target uses. A
+# cross-cloud setup (e.g. aws-ecs on AWS + an Azure resource) may fill BOTH.
+oidc:
+  aws:
+    account_id: ""              # 12-digit AWS account id, e.g. "123456789012"
+    role_name: gha-deploy-role  # IAM role the pipeline assumes
+    region: eu-west-2           # default region for deploy actions
+    thumbprint: auto            # OIDC provider cert thumbprint; "auto" = fetch at bootstrap
+    # provider_arn: ""          # OPTIONAL: reuse an existing IAM OIDC provider ARN
+  azure:                        # OPTIONAL: fill for Azure / Databricks-on-Azure targets
+    tenant_id: ""               # Entra ID tenant (GUID)
+    subscription_id: ""         # target subscription (GUID)
+    client_id: ""               # app registration (workload-identity-federation) client id
+    # resource_group: ""        # OPTIONAL: resource group for created resources
+
+
+# -----------------------------------------------------------------------------
+# runners — where pipeline jobs execute (REQUIRED, all vendors)
+# -----------------------------------------------------------------------------
+runners:
+  mode: shared                        # shared = vendor-hosted runners; self-hosted = your own
+  # registration_token_env: RUNNER_TOKEN  # REQUIRED only when mode: self-hosted.
+                                      #   Name of the env var holding the runner registration
+                                      #   token (value read from env, never written here).
+  # labels: [linux, x64]              # OPTIONAL: labels/pool tags to target specific runners
+
+
+# -----------------------------------------------------------------------------
+# reviewers — named approver groups referenced by the IR's approvals.from_group
+# -----------------------------------------------------------------------------
+# Map a logical group name (used in pipeline.yaml) to the real accounts. The
+# bootstrapper wires these into the vendor's environment reviewers / approval checks.
+reviewers:
+  platform-approvers: []        # e.g. [alice, bob]  — GitHub usernames / ADO member ids
+  # security-approvers: []      # add more named groups as your IR references them
+
+
+# -----------------------------------------------------------------------------
+# branch_protection — merge rules the bootstrapper applies (REQUIRED for prod flows)
+# -----------------------------------------------------------------------------
+# Keyed by branch name. `required_checks` must match stage/job names the generated
+# pipeline produces (e.g. test, build).
+branch_protection:
+  main:
+    required_approvals: 2             # number of PR approvals before merge
+    required_checks: [test, build]    # status checks that must pass
+    enforce_admins: false             # true = rules also apply to admins
+    dismiss_stale_reviews: true       # drop approvals when new commits are pushed
+
+
+# -----------------------------------------------------------------------------
+# target — per-target-platform wiring (fill the block matching pipeline.yaml's
+#          target_platform; omit the others). Extensible: add a block per plugin.
+# -----------------------------------------------------------------------------
+target:
+
+  # --- aws-ecs: container image → ECR → ECS service -------------------------
+  aws-ecs:
+    ecr_repo_secret: ECR_REPO         # secret NAME holding the ECR repo URI (value in secrets file)
+    cluster: my-cluster               # ECS cluster name
+    service: my-service               # ECS service name
+    task_family: my-service-task      # ECS task definition family
+    # container_port: 8080            # OPTIONAL: port the container listens on
+
+  # --- databricks: notebooks/wheel → job (NO image) -------------------------
+  databricks:
+    host_secret: DATABRICKS_HOST      # secret NAME holding the workspace URL
+    token_secret: DATABRICKS_TOKEN    # secret NAME holding the workspace PAT
+    job_name: my-service-job          # Databricks job to create/update
+    # artifact_path: /Volumes/main/default/artifacts  # OPTIONAL: DBFS/Volumes upload target
+    # unity_catalog: main             # OPTIONAL: Unity Catalog name if UC wiring is used
+
+  # --- add future target blocks here (azure-functions, kubernetes, …) -------
+  # azure-functions:
+  #   function_app: my-func-app
+  #   storage_account_secret: FUNC_STORAGE
+
+
+# -----------------------------------------------------------------------------
+# secrets — the catalog of secret NAMES this client uses (REQUIRED)
+# -----------------------------------------------------------------------------
+# NAMES ONLY. Every name listed here MUST have a value in `secrets.local.yaml`.
+# The bootstrapper pushes these to the vendor secret store by name; generated
+# pipeline files reference them by key (never the value). List the subset your
+# chosen axes actually need.
+secrets:
+  - ECR_REPO                    # aws-ecs: ECR repository URI
+  - DATABRICKS_HOST             # databricks: workspace URL
+  - DATABRICKS_TOKEN            # databricks: workspace PAT

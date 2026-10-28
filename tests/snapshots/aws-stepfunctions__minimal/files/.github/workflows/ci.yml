@@ -1,0 +1,77 @@
+name: minimal-svc CI
+"on":
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch: {}
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: us-east-1
+    - name: test
+      run: |
+        echo 'Validating ASL state-machine definition is well-formed (aws-stepfunctions)'
+        if [ -f stepfunctions/state-machine.asl.json ]; then python -c "import json; json.load(open('stepfunctions/state-machine.asl.json'))" && echo 'ASL definition is valid JSON'; else echo 'no ASL definition staged yet; skipping'; fi
+        make test
+  build:
+    name: build
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      SFN_ARTIFACT_BUCKET: ${{ secrets.SFN_ARTIFACT_BUCKET }}
+      SFN_DEFINITION_KEY: ${{ secrets.SFN_DEFINITION_KEY }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: us-east-1
+    - name: build
+      run: |
+        echo 'Building Step Functions state machine: ASL definition (NO image)'
+        python -c "import json; json.load(open('stepfunctions/state-machine.asl.json'))" && echo 'ASL definition validated'
+        echo 'Uploading ASL definition to S3 (aws-stepfunctions) — no image push'
+        aws s3api put-object --bucket $SFN_ARTIFACT_BUCKET --key $SFN_DEFINITION_KEY --body stepfunctions/state-machine.asl.json --region $AWS_REGION
+  deploy-dev:
+    name: deploy-dev
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      SFN_ROLE_ARN: ${{ secrets.SFN_ROLE_ARN }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: us-east-1
+    - name: deploy-dev
+      run: |
+        echo 'Deploying Step Functions state machine (create/update via CLI) — NO ECS'
+        EXISTING_ARN="$(aws stepfunctions list-state-machines --region $AWS_REGION --query "stateMachines[?name=='minimal-svc-sfn'].stateMachineArn" --output text)"
+        if [ -n "$EXISTING_ARN" ]; then aws stepfunctions update-state-machine --state-machine-arn "$EXISTING_ARN" --region $AWS_REGION --definition "$(cat stepfunctions/state-machine.asl.json)" --role-arn $SFN_ROLE_ARN; else aws stepfunctions create-state-machine --name minimal-svc-sfn --region $AWS_REGION --definition "$(cat stepfunctions/state-machine.asl.json)" --role-arn $SFN_ROLE_ARN; fi
+        echo 'Starting Step Functions execution and polling status (aws-stepfunctions)'
+        SM_ARN="$(aws stepfunctions list-state-machines --region $AWS_REGION --query "stateMachines[?name=='minimal-svc-sfn'].stateMachineArn" --output text)"
+        EXEC_ARN="$(aws stepfunctions start-execution --state-machine-arn "$SM_ARN" --region $AWS_REGION --query 'executionArn' --output text)"
+        while true; do STATUS="$(aws stepfunctions describe-execution --execution-arn "$EXEC_ARN" --region $AWS_REGION --query 'status' --output text)"; if [ "$STATUS" = "SUCCEEDED" ] || [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "TIMED_OUT" ] || [ "$STATUS" = "ABORTED" ]; then break; fi; echo "execution status: $STATUS; waiting..."; sleep 5; done
+        echo "execution final status: $STATUS"; [ "$STATUS" = "SUCCEEDED" ]

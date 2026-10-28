@@ -1,0 +1,9 @@
+{
+  "name": "full-svc-linkedservice",
+  "properties": {
+    "type": "AzureBlobFS",
+    "typeProperties": {
+      "url": "https://$ADF_STORAGE_ACCOUNT.dfs.core.windows.net"
+    }
+  }
+}

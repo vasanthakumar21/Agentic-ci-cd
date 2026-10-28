@@ -1,0 +1,21 @@
+# Example tfvars for the azure-container-apps backing infrastructure (generated).
+# Copy to terraform.tfvars and fill with your real (git-ignored) values.
+# NO secrets or real account specifics belong in the committed example (R6).
+
+location            = "eu-west-2"
+project_name        = "full-svc"
+resource_group_name = "full-svc-rg"
+
+# Registry tier + the placeholder image the app starts with (deploy overrides it).
+acr_sku       = "Standard"
+initial_image = "mcr.microsoft.com/k8se/quickstart:latest"
+
+# Ingress + scaling.
+container_port = 8080
+min_replicas   = 0
+max_replicas   = 2
+
+# CI OIDC trust — scope the subject to your repo/branch.
+oidc_issuer_url = "https://token.actions.githubusercontent.com"
+oidc_subject    = "repo:your-org/your-repo:ref:refs/heads/main"
+oidc_audience   = "api://AzureADTokenExchange"

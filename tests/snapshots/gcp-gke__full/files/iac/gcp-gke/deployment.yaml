@@ -1,0 +1,37 @@
+# Kubernetes Deployment for the gcp-gke target (generated — design §11.9).
+#
+# Image and namespace are ${VAR} placeholders substituted at deploy time from
+# non-secret settings/references (R6) — no literal image, registry credential, or
+# namespace is committed. The pod runs under the GKE Workload Identity
+# ServiceAccount so it impersonates its bound Google service account.
+# Deterministic: stable key order, no timestamps (R5.3).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: full-svc-deployment
+  namespace: ${NAMESPACE}
+  labels:
+    app: full-svc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: full-svc
+  template:
+    metadata:
+      labels:
+        app: full-svc
+    spec:
+      serviceAccountName: full-svc-sa
+      containers:
+        - name: full-svc
+          image: ${IMAGE_REF}
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"

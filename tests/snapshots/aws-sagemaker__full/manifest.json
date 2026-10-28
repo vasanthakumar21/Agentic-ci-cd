@@ -1,0 +1,10 @@
+{
+  "paths": [
+    ".github/workflows/ci.yml",
+    "Dockerfile",
+    "iac/aws-sagemaker/main.tf",
+    "iac/aws-sagemaker/outputs.tf",
+    "iac/aws-sagemaker/terraform.tfvars.example",
+    "iac/aws-sagemaker/variables.tf"
+  ]
+}

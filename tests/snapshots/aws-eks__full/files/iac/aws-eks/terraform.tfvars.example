@@ -1,0 +1,18 @@
+# Example tfvars for the aws-eks backing infrastructure (generated).
+# Copy to terraform.tfvars and fill with your real (git-ignored) values.
+# NO secrets or real account specifics belong in the committed example (R6).
+
+aws_region   = "eu-west-2"
+project_name = "full-svc"
+
+# The existing EKS cluster the workload deploys into (referenced, not created).
+eks_cluster_name = "REPLACE_ME-cluster"
+
+# Workload namespace + ServiceAccount the IRSA role is bound to.
+namespace            = "default"
+service_account_name = "full-svc"
+
+# CI OIDC trust — scope the subject to your repo/branch.
+oidc_provider_url = "https://token.actions.githubusercontent.com"
+oidc_subject      = "repo:your-org/your-repo:ref:refs/heads/main"
+oidc_client_id_list = ["sts.amazonaws.com"]

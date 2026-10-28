@@ -1,0 +1,81 @@
+name: minimal-svc CI
+"on":
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch: {}
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Azure login (OIDC)
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    - name: test
+      run: |
+        echo 'Linting notebooks/python (databricks)'
+        if command -v ruff >/dev/null 2>&1; then ruff check .; else echo 'ruff not found; skipping python lint'; fi
+        make test
+  build:
+    name: build
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      DATABRICKS_ARTIFACT_PATH: ${{ secrets.DATABRICKS_ARTIFACT_PATH }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Azure login (OIDC)
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    - name: build
+      run: |
+        echo 'Building Databricks artifact: wheel + notebooks (NO image)'
+        python -m build --wheel --outdir dist/
+        mkdir -p dist/notebooks
+        if [ -d notebooks ]; then cp -r notebooks/. dist/notebooks/; else echo 'no notebooks/ dir; wheel-only build'; fi
+        echo 'Uploading artifact to DBFS/Volumes (databricks) — no image push'
+        WHEEL="$(ls dist/*.whl | head -n1)"
+        databricks fs cp --overwrite "$WHEEL" "$DATABRICKS_ARTIFACT_PATH"
+        if [ -d dist/notebooks ]; then databricks workspace import-dir --overwrite dist/notebooks "/Shared/minimal_svc"; fi
+  deploy-dev:
+    name: deploy-dev
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      DATABRICKS_JOB_ID: ${{ secrets.DATABRICKS_JOB_ID }}
+      RUN: ${{ secrets.RUN }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Azure login (OIDC)
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    - name: deploy-dev
+      run: |
+        echo 'Deploying Databricks job (create/update via CLI) — NO ECS'
+        JOB_ID="$(databricks jobs list --output json | python -c "import json,sys; jobs=json.load(sys.stdin).get('jobs', []); print(next((str(j['job_id']) for j in jobs if j.get('settings', {}).get('name')=='minimal-svc-job'), ''))")"
+        if [ -n "$JOB_ID" ]; then databricks jobs reset --job-id "$JOB_ID" --json @databricks/job.json; else databricks jobs create --json @databricks/job.json; fi
+        echo 'Running Databricks job and checking run state (databricks)'
+        RUN_ID="$(databricks jobs run-now --job-id $DATABRICKS_JOB_ID --output json | python -c "import json,sys; print(json.load(sys.stdin)['run_id'])")"
+        while true; do RUN="$(databricks jobs get-run --run-id "$RUN_ID" --output json)"; LIFECYCLE="$(echo "$RUN" | python -c "import json,sys; print(json.load(sys.stdin)['state']['life_cycle_state'])")"; if [ "$LIFECYCLE" = "TERMINATED" ] || [ "$LIFECYCLE" = "SKIPPED" ] || [ "$LIFECYCLE" = "INTERNAL_ERROR" ]; then break; fi; echo "job run state: $LIFECYCLE; waiting..."; sleep 10; done
+        RESULT="$(echo "$RUN" | python -c "import json,sys; print(json.load(sys.stdin)['state'].get('result_state',''))")"; echo "job result state: $RESULT"; [ "$RESULT" = "SUCCESS" ]

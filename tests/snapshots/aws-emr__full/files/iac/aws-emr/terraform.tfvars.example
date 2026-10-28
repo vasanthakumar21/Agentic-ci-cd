@@ -1,0 +1,20 @@
+# Example tfvars for the aws-emr backing infrastructure (generated).
+# Copy to terraform.tfvars and fill with your real (git-ignored) values.
+# NO secrets or real account specifics belong in the committed example (R6).
+
+aws_region   = "eu-west-2"
+project_name = "full-svc"
+
+# Where the uploaded job script + extra libs live (package verb targets).
+entry_point_key    = "emr/scripts/main.py"
+extra_py_files_key = "emr/libs/extra-python-libs.zip"
+
+# EMR Serverless runtime + sizing (override as needed).
+emr_release_label = "emr-7.0.0"
+max_cpu           = "16 vCPU"
+max_memory        = "64 GB"
+
+# CI OIDC trust — scope the subject to your repo/branch.
+oidc_provider_url = "https://token.actions.githubusercontent.com"
+oidc_subject      = "repo:your-org/your-repo:ref:refs/heads/main"
+oidc_client_id_list = ["sts.amazonaws.com"]

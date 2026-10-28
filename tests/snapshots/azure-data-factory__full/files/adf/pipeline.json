@@ -1,0 +1,31 @@
+{
+  "name": "full-svc-pipeline",
+  "properties": {
+    "activities": [
+      {
+        "inputs": [
+          {
+            "referenceName": "full-svc-dataset",
+            "type": "DatasetReference"
+          }
+        ],
+        "name": "Copy",
+        "outputs": [
+          {
+            "referenceName": "full-svc-dataset",
+            "type": "DatasetReference"
+          }
+        ],
+        "type": "Copy",
+        "typeProperties": {
+          "sink": {
+            "type": "ParquetSink"
+          },
+          "source": {
+            "type": "ParquetSource"
+          }
+        }
+      }
+    ]
+  }
+}

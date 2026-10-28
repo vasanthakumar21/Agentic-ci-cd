@@ -1,0 +1,6 @@
+{
+  "sparkSubmit": {
+    "entryPoint": "s3://$EMR_ARTIFACT_BUCKET/$EMR_SCRIPT_KEY",
+    "sparkSubmitParameters": "--py-files s3://$EMR_ARTIFACT_BUCKET/$EMR_EXTRA_LIBS_KEY --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.driver.cores=2 --conf spark.driver.memory=4g"
+  }
+}

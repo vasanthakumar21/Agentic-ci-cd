@@ -1,0 +1,43 @@
+# Sample IR (task 12.2) — GitHub Actions x Kubernetes.
+# Existing CI vendor (github) composed with a new target (kubernetes).
+# kubernetes deploys a container image, so a Dockerfile + k8s manifests are
+# emitted; cloud.provider aws drives the OIDC login flavour.
+version: 1
+ci_vendor: github
+target_platform: kubernetes
+
+project:
+  name: orders-svc
+  language: python
+
+cloud:
+  provider: aws
+  region: eu-west-2
+  auth: oidc
+
+environments:
+  - name: dev
+    gate: auto
+    protection: none
+  - name: prod
+    gate: manual
+    protection: required-approvals
+
+stages:
+  - id: test
+    timeout_minutes: 15
+    runs: pytest -q
+    scans: [sast, secrets]
+  - id: build
+    timeout_minutes: 30
+    runs: make build
+  - id: deploy-dev
+    environment: dev
+    runs: make deploy ENV=dev
+  - id: deploy-prod
+    environment: prod
+    when: manual
+    runs: make deploy ENV=prod
+    approvals:
+      required: 2
+      from_group: platform-approvers

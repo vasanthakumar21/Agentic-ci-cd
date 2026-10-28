@@ -1,0 +1,18 @@
+# Example tfvars for the gcp-dataproc backing infrastructure (generated).
+# Copy to terraform.tfvars and fill with your real (git-ignored) values.
+# NO secrets or real project specifics belong in the committed example (R6).
+
+project_id   = "REPLACE_ME_PROJECT_ID"
+region       = "eu-west-2"
+project_name = "full-svc"
+
+# Where the uploaded PySpark script + extra libs live (package verb targets).
+main_python_file_key = "dataproc/scripts/main.py"
+python_file_uris_key = "dataproc/libs/extra-python-libs.zip"
+
+# Dataproc Serverless runtime version (override as needed).
+runtime_version = "2.2"
+
+# CI OIDC trust — scope the WIF provider to your CI repository.
+ci_repository   = "your-org/your-repo"
+oidc_issuer_uri = "https://token.actions.githubusercontent.com"

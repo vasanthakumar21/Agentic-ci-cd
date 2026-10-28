@@ -1,0 +1,16 @@
+{
+  "Comment": "State machine for minimal-svc (generated starting ASL).",
+  "StartAt": "Start",
+  "States": {
+    "Done": {
+      "Type": "Succeed"
+    },
+    "Start": {
+      "Next": "Done",
+      "Result": {
+        "status": "ok"
+      },
+      "Type": "Pass"
+    }
+  }
+}

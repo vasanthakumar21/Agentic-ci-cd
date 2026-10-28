@@ -1,0 +1,22 @@
+# Example tfvars for the aws-glue backing infrastructure (generated).
+# Copy to terraform.tfvars and fill with your real (git-ignored) values.
+# NO secrets or real account specifics belong in the committed example (R6).
+
+aws_region   = "eu-west-2"
+project_name = "full-svc"
+
+# Where the uploaded job script + extra libs live (package verb targets).
+script_key         = "glue/scripts/main.py"
+extra_py_files_key = "glue/libs/extra-python-libs.zip"
+
+# Glue runtime + sizing (override as needed).
+glue_version      = "4.0"
+worker_type       = "G.1X"
+number_of_workers = 2
+max_retries       = 0
+timeout_minutes   = 60
+
+# CI OIDC trust — scope the subject to your repo/branch.
+oidc_provider_url = "https://token.actions.githubusercontent.com"
+oidc_subject      = "repo:your-org/your-repo:ref:refs/heads/main"
+oidc_client_id_list = ["sts.amazonaws.com"]

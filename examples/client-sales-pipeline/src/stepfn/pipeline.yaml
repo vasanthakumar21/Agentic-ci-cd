@@ -1,0 +1,20 @@
+# Step Functions orchestrator — ONLY the keys unique to this service.
+# version, ci_vendor, cloud inherited from ../../pipeline.base.yaml.
+target_platform: aws-stepfunctions
+project:
+  name: sales-orchestrator
+  language: python
+environments:
+  - name: dev
+    gate: auto
+    protection: none
+stages:
+  - id: test
+    runs: >-
+      python -m pip install --quiet pytest 2>/dev/null || true;
+      if ls tests/*.py test_*.py 2>/dev/null | grep -q .; then pytest -q; else
+      echo "no tests; skipping"; fi
+  - id: build
+    runs: echo "assembling state machine definition"
+  - id: deploy-dev
+    environment: dev

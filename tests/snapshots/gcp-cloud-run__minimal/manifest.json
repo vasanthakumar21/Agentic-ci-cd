@@ -1,0 +1,10 @@
+{
+  "paths": [
+    ".github/workflows/ci.yml",
+    "Dockerfile",
+    "iac/gcp-cloud-run/main.tf",
+    "iac/gcp-cloud-run/outputs.tf",
+    "iac/gcp-cloud-run/terraform.tfvars.example",
+    "iac/gcp-cloud-run/variables.tf"
+  ]
+}

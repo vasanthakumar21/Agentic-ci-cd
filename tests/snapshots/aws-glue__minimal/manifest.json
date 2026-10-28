@@ -1,0 +1,10 @@
+{
+  "paths": [
+    ".github/workflows/ci.yml",
+    "glue/glue-job.json",
+    "iac/aws-glue/main.tf",
+    "iac/aws-glue/outputs.tf",
+    "iac/aws-glue/terraform.tfvars.example",
+    "iac/aws-glue/variables.tf"
+  ]
+}

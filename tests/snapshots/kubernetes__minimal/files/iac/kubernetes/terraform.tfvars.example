@@ -1,0 +1,14 @@
+# Example tfvars for the kubernetes backing workload (generated).
+# Copy to terraform.tfvars and fill with your real (git-ignored) values.
+# NO secrets or registry credentials belong in the committed example (R6).
+
+region       = "us-east-1"
+project_name = "minimal-svc"
+namespace    = "default"
+
+# Image the Deployment runs — point at your registry/repo and tag.
+image_repo = "registry.example.com/REPLACE_ME"
+image_tag  = "latest"
+
+# kubeconfig context to target (leave empty to use the current context).
+kube_context = ""

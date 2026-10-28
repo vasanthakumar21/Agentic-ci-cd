@@ -1,0 +1,11 @@
+{
+  "paths": [
+    ".github/workflows/ci.yml",
+    "Dockerfile",
+    "batch/batch-job-definition.json",
+    "iac/aws-batch/main.tf",
+    "iac/aws-batch/outputs.tf",
+    "iac/aws-batch/terraform.tfvars.example",
+    "iac/aws-batch/variables.tf"
+  ]
+}

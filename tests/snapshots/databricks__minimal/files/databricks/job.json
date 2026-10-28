@@ -1,0 +1,28 @@
+{
+  "job_clusters": [
+    {
+      "job_cluster_key": "default",
+      "new_cluster": {
+        "node_type_id": "i3.xlarge",
+        "num_workers": 2,
+        "spark_version": "15.4.x-scala2.12"
+      }
+    }
+  ],
+  "name": "minimal-svc-job",
+  "tasks": [
+    {
+      "job_cluster_key": "default",
+      "libraries": [
+        {
+          "whl": "$DATABRICKS_ARTIFACT_PATH"
+        }
+      ],
+      "python_wheel_task": {
+        "entry_point": "main",
+        "package_name": "minimal_svc"
+      },
+      "task_key": "main"
+    }
+  ]
+}

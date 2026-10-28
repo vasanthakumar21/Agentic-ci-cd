@@ -1,0 +1,16 @@
+{
+  "environmentConfig": {
+    "executionConfig": {
+      "stagingBucket": "gs://$DATAPROC_STAGING_BUCKET"
+    }
+  },
+  "pysparkBatch": {
+    "mainPythonFileUri": "gs://$DATAPROC_STAGING_BUCKET/$DATAPROC_MAIN_SCRIPT_KEY",
+    "pythonFileUris": [
+      "gs://$DATAPROC_STAGING_BUCKET/$DATAPROC_EXTRA_LIBS_KEY"
+    ]
+  },
+  "runtimeConfig": {
+    "version": "2.2"
+  }
+}

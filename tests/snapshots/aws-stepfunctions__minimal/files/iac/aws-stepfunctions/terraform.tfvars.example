@@ -1,0 +1,15 @@
+# Example tfvars for the aws-stepfunctions backing infrastructure (generated).
+# Copy to terraform.tfvars and fill with your real (git-ignored) values.
+# NO secrets or real account specifics belong in the committed example (R6).
+
+aws_region   = "us-east-1"
+project_name = "minimal-svc"
+
+# Where the uploaded ASL definition lives (package verb targets).
+definition_key     = "stepfunctions/state-machine.asl.json"
+state_machine_type = "STANDARD"
+
+# CI OIDC trust — scope the subject to your repo/branch.
+oidc_provider_url = "https://token.actions.githubusercontent.com"
+oidc_subject      = "repo:your-org/your-repo:ref:refs/heads/main"
+oidc_client_id_list = ["sts.amazonaws.com"]

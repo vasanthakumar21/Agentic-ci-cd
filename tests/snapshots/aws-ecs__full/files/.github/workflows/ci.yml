@@ -1,0 +1,129 @@
+name: full-svc CI
+"on":
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch: {}
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: SAST scan
+      run: echo 'run SAST scan'
+    - name: Secret scan
+      run: echo 'run secret scan'
+    - name: Dependency scan
+      run: echo 'run dependency scan'
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: test
+      run: |
+        echo 'Linting Dockerfile (aws-ecs)'
+        if command -v hadolint >/dev/null 2>&1; then hadolint Dockerfile; else echo 'hadolint not found; skipping Dockerfile lint'; fi
+        make test
+    # retries=1 requested; GitHub Actions has no native job retry. Wire a step-level retry action (e.g. nick-fields/retry) if needed.
+  build:
+    name: build
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ECR_REPO: ${{ secrets.ECR_REPO }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: build
+      run: |
+        echo 'Building container image (aws-ecs)'
+        docker build -t $ECR_REPO:$IMAGE_TAG -f Dockerfile .
+        echo 'Pushing image to ECR (aws-ecs)'
+        ECR_REGISTRY="$(echo $ECR_REPO | cut -d'/' -f1)"
+        aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+        docker push $ECR_REPO:$IMAGE_TAG
+  deploy-dev:
+    name: deploy-dev
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      ECR_REPO: ${{ secrets.ECR_REPO }}
+      ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
+      ECS_CONTAINER: ${{ secrets.ECS_CONTAINER }}
+      ECS_SERVICE: ${{ secrets.ECS_SERVICE }}
+      ECS_TASK_FAMILY: ${{ secrets.ECS_TASK_FAMILY }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: deploy-dev
+      run: |
+        echo 'Deploying to ECS (aws-ecs)'
+        aws ecs describe-task-definition --task-definition $ECS_TASK_FAMILY --region eu-west-2 --query taskDefinition > taskdef.json
+        NEW_IMAGE="$ECR_REPO:$IMAGE_TAG"
+        python -c "import json,sys,os; d=json.load(open('taskdef.json')); [c.__setitem__('image', os.environ['NEW_IMAGE']) for c in d['containerDefinitions'] if c['name']=='$ECS_CONTAINER']; [d.pop(k,None) for k in ('taskDefinitionArn','revision','status','requiresAttributes','compatibilities','registeredAt','registeredBy')]; json.dump(d, open('taskdef-new.json','w'))"
+        NEW_TASK_DEF_ARN="$(aws ecs register-task-definition --region eu-west-2 --cli-input-json file://taskdef-new.json --query taskDefinition.taskDefinitionArn --output text)"
+        aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --task-definition "$NEW_TASK_DEF_ARN" --region eu-west-2
+        echo 'Verifying ECS service health (aws-ecs)'
+        aws ecs wait services-stable --cluster $ECS_CLUSTER --services $ECS_SERVICE --region eu-west-2
+        aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --region eu-west-2 --query 'services[0].{status:status,running:runningCount,desired:desiredCount}'
+  deploy-prod:
+    name: deploy-prod
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    environment: prod
+    env:
+      ECR_REPO: ${{ secrets.ECR_REPO }}
+      ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
+      ECS_CONTAINER: ${{ secrets.ECS_CONTAINER }}
+      ECS_SERVICE: ${{ secrets.ECS_SERVICE }}
+      ECS_TASK_FAMILY: ${{ secrets.ECS_TASK_FAMILY }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: deploy-prod
+      run: |
+        echo 'Deploying to ECS (aws-ecs)'
+        aws ecs describe-task-definition --task-definition $ECS_TASK_FAMILY --region eu-west-2 --query taskDefinition > taskdef.json
+        NEW_IMAGE="$ECR_REPO:$IMAGE_TAG"
+        python -c "import json,sys,os; d=json.load(open('taskdef.json')); [c.__setitem__('image', os.environ['NEW_IMAGE']) for c in d['containerDefinitions'] if c['name']=='$ECS_CONTAINER']; [d.pop(k,None) for k in ('taskDefinitionArn','revision','status','requiresAttributes','compatibilities','registeredAt','registeredBy')]; json.dump(d, open('taskdef-new.json','w'))"
+        NEW_TASK_DEF_ARN="$(aws ecs register-task-definition --region eu-west-2 --cli-input-json file://taskdef-new.json --query taskDefinition.taskDefinitionArn --output text)"
+        aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --task-definition "$NEW_TASK_DEF_ARN" --region eu-west-2
+        echo 'Verifying ECS service health (aws-ecs)'
+        aws ecs wait services-stable --cluster $ECS_CLUSTER --services $ECS_SERVICE --region eu-west-2
+        aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --region eu-west-2 --query 'services[0].{status:status,running:runningCount,desired:desiredCount}'

@@ -1,0 +1,6 @@
+{
+  "aws-ecs": "cd015287ef1698d8b186d0f4cd20666b370a8c56b765124dc16eb13bc8a03600",
+  "azure-functions": "2723e7f08c0d3171ef3cc43fed12191048832cd8a65dc0fc31f8051aa59e154b",
+  "databricks": "f964462cf5c84913c7381c8938902b38ae814b196eaa87fe7cf9d3de6c3871da",
+  "kubernetes": "fcbf5e349e622eda4b681a3fc3af4b80fdf0fa03a1922ab50ffbd8dc7d110069"
+}

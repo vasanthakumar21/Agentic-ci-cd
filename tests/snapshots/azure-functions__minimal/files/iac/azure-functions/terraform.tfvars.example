@@ -1,0 +1,21 @@
+# Example tfvars for the azure-functions backing infrastructure (generated).
+# Copy to terraform.tfvars and fill with your real (git-ignored) values.
+# NO secrets or real account specifics belong in the committed example (R6).
+
+location            = "uksouth"
+project_name        = "minimal-svc"
+resource_group_name = "minimal-svc-rg"
+
+# Function App runtime (override for node/dotnet-isolated/etc.).
+runtime_name    = "python"
+runtime_version = "3.11"
+
+# Hosting + storage tiers (override as needed).
+service_plan_sku         = "Y1"
+storage_account_tier     = "Standard"
+storage_replication_type = "LRS"
+
+# CI OIDC trust — scope the subject to your repo/branch.
+oidc_issuer_url = "https://token.actions.githubusercontent.com"
+oidc_subject    = "repo:your-org/your-repo:ref:refs/heads/main"
+oidc_audience   = "api://AzureADTokenExchange"

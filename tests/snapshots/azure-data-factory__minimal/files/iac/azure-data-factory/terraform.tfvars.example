@@ -1,0 +1,15 @@
+# Example tfvars for the azure-data-factory backing infrastructure (generated).
+# Copy to terraform.tfvars and fill with your real (git-ignored) values.
+# NO secrets or real account specifics belong in the committed example (R6).
+
+location            = "uksouth"
+project_name        = "minimal-svc"
+resource_group_name = "minimal-svc-rg"
+
+# ADLS Gen2 filesystem for ADF definitions/artifacts.
+artifact_filesystem = "definitions"
+
+# CI OIDC trust — scope the subject to your repo/branch.
+oidc_issuer_url = "https://token.actions.githubusercontent.com"
+oidc_subject    = "repo:your-org/your-repo:ref:refs/heads/main"
+oidc_audience   = "api://AzureADTokenExchange"

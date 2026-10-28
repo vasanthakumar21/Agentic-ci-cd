@@ -1,0 +1,50 @@
+# =============================================================================
+# client-azdo-databricks / .cicd/bootstrap.local.yaml  —  COMMITTED EXAMPLE (R6.4)
+# =============================================================================
+# Self-contained per-client bootstrap wiring (R10.3). This client's axes are
+# ci_vendor: azure-devops × target_platform: databricks, so only the Azure
+# DevOps + databricks blocks are filled; aws-ecs / aws-oidc blocks are absent —
+# proving the config is per-combination, not one-size-fits-all.
+#
+# Copy to bootstrap.local.yaml (git-ignored via .cicd/*.local.*) and fill real
+# values. Secret VALUES live in secrets.local.yaml; admin/runner tokens come
+# from the environment by name (*_env). A missing REQUIRED key aborts bootstrap
+# naming the key (R6.5); values are never logged (R9.3).
+# =============================================================================
+repo:
+  owner: my-azdo-org              # throwaway Azure DevOps org for the isolated test
+  name: analytics-jobs            # repository name (matches pipeline.yaml project.name)
+  create_if_missing: true
+  default_branch: main
+
+vendor_admin:
+  token_env: CICD_ADMIN_TOKEN     # export a throwaway Azure DevOps PAT in this env var
+
+runners:
+  mode: shared                    # Microsoft-hosted agents
+
+oidc:
+  azure:
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    subscription_id: "00000000-0000-0000-0000-000000000000"
+    client_id: "00000000-0000-0000-0000-000000000000"
+
+reviewers:
+  platform-approvers: []          # e.g. [alice, bob] — wired as prod approval checks
+
+branch_protection:
+  main:
+    required_approvals: 2
+    required_checks: [test, build]
+    enforce_admins: false
+    dismiss_stale_reviews: true
+
+target:
+  databricks:
+    host_secret: DATABRICKS_HOST  # secret NAME holding the workspace URL
+    token_secret: DATABRICKS_TOKEN  # secret NAME holding the workspace PAT
+    job_name: analytics-jobs-job  # Databricks job to create/update (NO image — R3.3)
+
+secrets:
+  - DATABRICKS_HOST               # databricks: workspace URL (value in secrets.local.yaml)
+  - DATABRICKS_TOKEN              # databricks: workspace PAT

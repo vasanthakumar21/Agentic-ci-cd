@@ -1,0 +1,16 @@
+{
+  "name": "minimal-svc-dataset",
+  "properties": {
+    "linkedServiceName": {
+      "referenceName": "minimal-svc-linkedservice",
+      "type": "LinkedServiceReference"
+    },
+    "type": "Parquet",
+    "typeProperties": {
+      "location": {
+        "fileSystem": "$ADF_FILESYSTEM",
+        "type": "AzureBlobFSLocation"
+      }
+    }
+  }
+}

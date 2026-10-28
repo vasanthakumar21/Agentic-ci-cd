@@ -1,0 +1,16 @@
+{
+  "name": "full-svc-dataset",
+  "properties": {
+    "linkedServiceName": {
+      "referenceName": "full-svc-linkedservice",
+      "type": "LinkedServiceReference"
+    },
+    "type": "Parquet",
+    "typeProperties": {
+      "location": {
+        "fileSystem": "$ADF_FILESYSTEM",
+        "type": "AzureBlobFSLocation"
+      }
+    }
+  }
+}

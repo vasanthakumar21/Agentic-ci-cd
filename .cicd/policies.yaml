@@ -1,0 +1,15 @@
+# =============================================================================
+# .cicd/policies.yaml  —  COMMITTED ORG POLICY  (design §11.5, the 1d gate)
+# =============================================================================
+# Org-level, NON-secret, committed policy document. See policies.yaml.example
+# for the full documentation of every rule and its params.
+#
+# This product repo ships an EMPTY policy set (no rules), so the 1d policy gate
+# is a no-op here. A client repo copies policies.yaml.example, enables the rules
+# the org wants, and the generator enforces them against the vendor-neutral IR
+# before rendering — the SAME rules for every ci_vendor × target_platform (R3.4),
+# deterministically (R5.3).
+# =============================================================================
+
+version: 1
+policies: []

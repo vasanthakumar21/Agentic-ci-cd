@@ -1,0 +1,13 @@
+{
+  "paths": [
+    ".github/workflows/ci.yml",
+    "Dockerfile",
+    "iac/azure-aks/deployment.yaml",
+    "iac/azure-aks/main.tf",
+    "iac/azure-aks/outputs.tf",
+    "iac/azure-aks/service.yaml",
+    "iac/azure-aks/serviceaccount.yaml",
+    "iac/azure-aks/terraform.tfvars.example",
+    "iac/azure-aks/variables.tf"
+  ]
+}

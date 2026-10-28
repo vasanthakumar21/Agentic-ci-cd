@@ -1,0 +1,82 @@
+name: minimal-svc CI
+"on":
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch: {}
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: us-east-1
+    - name: test
+      run: |
+        echo 'Linting Dockerfile (aws-eks)'
+        if command -v hadolint >/dev/null 2>&1; then hadolint Dockerfile; else echo 'hadolint not found; skipping Dockerfile lint'; fi
+        make test
+  build:
+    name: build
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      ECR_REPO: ${{ secrets.ECR_REPO }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: us-east-1
+    - name: build
+      run: |
+        echo 'Building container image (aws-eks)'
+        docker build -t $ECR_REPO:$IMAGE_TAG -f Dockerfile .
+        echo 'Pushing image to ECR (aws-eks)'
+        ECR_REGISTRY="$(echo $ECR_REPO | cut -d'/' -f1)"
+        aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+        docker push $ECR_REPO:$IMAGE_TAG
+  deploy-dev:
+    name: deploy-dev
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      DEPLOYMENT_NAME: ${{ secrets.DEPLOYMENT_NAME }}
+      ECR_REPO: ${{ secrets.ECR_REPO }}
+      EKS_CLUSTER: ${{ secrets.EKS_CLUSTER }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+      KUBE_CONTEXT: ${{ secrets.KUBE_CONTEXT }}
+      NAMESPACE: ${{ secrets.NAMESPACE }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: us-east-1
+    - name: deploy-dev
+      run: |
+        echo 'Deploying to EKS (aws-eks)'
+        aws eks update-kubeconfig --name $EKS_CLUSTER --region $AWS_REGION
+        if [ -d chart ] && command -v helm >/dev/null 2>&1; then helm upgrade --install $DEPLOYMENT_NAME ./chart --namespace $NAMESPACE --create-namespace --kube-context $KUBE_CONTEXT --set image.repository=$ECR_REPO --set image.tag=$IMAGE_TAG; else export IMAGE_REF=$ECR_REPO:$IMAGE_TAG NAMESPACE=$NAMESPACE; envsubst < iac/aws-eks/serviceaccount.yaml | kubectl --context $KUBE_CONTEXT -n $NAMESPACE apply -f -; envsubst < iac/aws-eks/deployment.yaml | kubectl --context $KUBE_CONTEXT -n $NAMESPACE apply -f -; envsubst < iac/aws-eks/service.yaml | kubectl --context $KUBE_CONTEXT -n $NAMESPACE apply -f -; fi
+        echo 'Verifying EKS rollout (aws-eks)'
+        kubectl --context $KUBE_CONTEXT rollout status deployment/$DEPLOYMENT_NAME -n $NAMESPACE --timeout=300s
+        kubectl --context $KUBE_CONTEXT get deployment/$DEPLOYMENT_NAME -n $NAMESPACE -o wide

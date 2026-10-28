@@ -1,0 +1,11 @@
+{
+  "paths": [
+    ".github/workflows/ci.yml",
+    "databricks/job.json",
+    "iac/databricks/README.md",
+    "iac/databricks/main.tf",
+    "iac/databricks/outputs.tf",
+    "iac/databricks/terraform.tfvars.example",
+    "iac/databricks/variables.tf"
+  ]
+}

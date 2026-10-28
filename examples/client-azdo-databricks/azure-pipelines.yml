@@ -1,0 +1,109 @@
+trigger:
+  branches:
+    include:
+    - main
+variables:
+- group: cicd-secrets
+stages:
+- stage: security
+  displayName: security
+  jobs:
+  - job: security
+    displayName: security
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - checkout: self
+    - script: echo 'run SAST scan'
+      displayName: SAST scan
+    - script: echo 'run secret scan'
+      displayName: Secret scan
+    - script: echo 'run dependency scan'
+      displayName: Dependency scan
+- stage: test
+  displayName: test
+  dependsOn: security
+  jobs:
+  - job: test
+    displayName: test
+    timeoutInMinutes: 15
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - checkout: self
+    - task: AzureCLI@2
+      displayName: Azure login (workload identity federation)
+      inputs:
+        azureSubscription: azure-wif
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: az account show
+    - script: make test
+      displayName: test
+      retryCountOnTaskFailure: 1
+- stage: build
+  displayName: build
+  dependsOn: test
+  jobs:
+  - job: build
+    displayName: build
+    timeoutInMinutes: 30
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - checkout: self
+    - task: AzureCLI@2
+      displayName: Azure login (workload identity federation)
+      inputs:
+        azureSubscription: azure-wif
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: az account show
+    - script: make build
+      displayName: build
+- stage: deploy_dev
+  displayName: deploy-dev
+  dependsOn: build
+  jobs:
+  - deployment: deploy_dev
+    displayName: deploy-dev
+    pool:
+      vmImage: ubuntu-latest
+    environment: dev
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          - task: AzureCLI@2
+            displayName: Azure login (workload identity federation)
+            inputs:
+              azureSubscription: azure-wif
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: az account show
+          - script: make deploy ENV=dev
+            displayName: deploy-dev
+- stage: deploy_prod
+  displayName: deploy-prod
+  dependsOn: deploy_dev
+  jobs:
+  - deployment: deploy_prod
+    displayName: deploy-prod
+    pool:
+      vmImage: ubuntu-latest
+    environment: prod
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          - task: AzureCLI@2
+            displayName: Azure login (workload identity federation)
+            inputs:
+              azureSubscription: azure-wif
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: az account show
+          - script: echo 'no command for stage deploy-prod'
+            displayName: deploy-prod

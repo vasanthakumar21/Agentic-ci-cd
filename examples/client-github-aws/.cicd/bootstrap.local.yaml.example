@@ -1,0 +1,51 @@
+# =============================================================================
+# client-github-aws / .cicd/bootstrap.local.yaml  —  COMMITTED EXAMPLE (R6.4)
+# =============================================================================
+# Self-contained per-client bootstrap wiring (R10.3). This client's axes are
+# ci_vendor: github × target_platform: aws-ecs, so only the GitHub + aws-ecs
+# blocks are filled; databricks / azure blocks are intentionally absent.
+#
+# Copy to bootstrap.local.yaml (git-ignored via .cicd/*.local.*) and fill real
+# values. Secret VALUES live in secrets.local.yaml; admin/runner tokens come
+# from the environment by name (*_env). A missing REQUIRED key aborts bootstrap
+# naming the key (R6.5); values are never logged (R9.3).
+# =============================================================================
+repo:
+  owner: my-github-org            # throwaway GitHub org/user for the isolated test
+  name: orders-api                # repository name (matches pipeline.yaml project.name)
+  create_if_missing: true         # bootstrap may create the repo (gated by --apply)
+  default_branch: main
+
+vendor_admin:
+  token_env: CICD_ADMIN_TOKEN     # export a throwaway GitHub PAT in this env var
+
+runners:
+  mode: shared                    # GitHub-hosted runners
+
+oidc:
+  aws:
+    account_id: "123456789012"    # throwaway AWS account id
+    role_name: gha-orders-deploy  # IAM role the pipeline assumes via OIDC
+    region: eu-west-2
+    thumbprint: auto
+
+reviewers:
+  platform-approvers: []          # e.g. [alice, bob] — wired as prod env reviewers
+
+branch_protection:
+  main:
+    required_approvals: 2
+    required_checks: [test, build]
+    enforce_admins: false
+    dismiss_stale_reviews: true
+
+target:
+  aws-ecs:
+    ecr_repo_secret: ECR_REPO     # secret NAME holding the ECR repo URI
+    cluster: orders-cluster
+    service: orders-api
+    task_family: orders-api-task
+
+secrets:
+  - ECR_REPO                      # aws-ecs: ECR repository URI (value in secrets.local.yaml)
+  - AWS_DEPLOY_ROLE_ARN           # referenced by the generated workflow (by key only)

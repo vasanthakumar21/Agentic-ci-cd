@@ -1,0 +1,10 @@
+{
+  "paths": [
+    ".github/workflows/ci.yml",
+    "iac/azure-synapse/main.tf",
+    "iac/azure-synapse/outputs.tf",
+    "iac/azure-synapse/terraform.tfvars.example",
+    "iac/azure-synapse/variables.tf",
+    "synapse/spark-job-definition.json"
+  ]
+}

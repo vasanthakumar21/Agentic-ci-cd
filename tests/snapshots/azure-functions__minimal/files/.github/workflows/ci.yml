@@ -1,0 +1,80 @@
+name: minimal-svc CI
+"on":
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch: {}
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Azure login (OIDC)
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    - name: test
+      run: |
+        echo 'Linting function code (azure-functions)'
+        if command -v ruff >/dev/null 2>&1; then ruff check .; else echo 'ruff not found; skipping function code lint'; fi
+        make test
+  build:
+    name: build
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Azure login (OIDC)
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    - name: build
+      run: |
+        echo 'Building Azure Functions package (azure-functions) — NO image'
+        mkdir -p .python_packages_build
+        if [ -f requirements.txt ]; then pip install --target .python_packages_build/.python_packages/lib/site-packages -r requirements.txt; else echo 'no requirements.txt; skipping dependency install'; fi
+        cp -r host.json .python_packages_build/ 2>/dev/null || true
+        cp -r requirements.txt .python_packages_build/ 2>/dev/null || true
+        echo 'Packaging Azure Functions app: zip + stage (azure-functions)'
+        zip -r functionapp.zip . -x '*.git*' -x 'functionapp.zip' -x '*.venv*'
+        echo 'Staged deployable artifact: functionapp.zip'
+  deploy-dev:
+    name: deploy-dev
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      AZURE_FUNCTION_APP: ${{ secrets.AZURE_FUNCTION_APP }}
+      AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+      HOST: ${{ secrets.HOST }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Azure login (OIDC)
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    - name: deploy-dev
+      run: |
+        echo 'Deploying Azure Functions app (azure-functions)'
+        if command -v func >/dev/null 2>&1; then func azure functionapp publish $AZURE_FUNCTION_APP --python; else az functionapp deployment source config-zip --resource-group $AZURE_RESOURCE_GROUP --name $AZURE_FUNCTION_APP --src functionapp.zip; fi
+        echo 'Verifying Azure Functions app (smoke test) (azure-functions)'
+        STATE="$(az functionapp show --name $AZURE_FUNCTION_APP --resource-group $AZURE_RESOURCE_GROUP --query state --output tsv)"
+        echo "function app state: $STATE"; [ "$STATE" = "Running" ]
+        HOST="$(az functionapp show --name $AZURE_FUNCTION_APP --resource-group $AZURE_RESOURCE_GROUP --query defaultHostName --output tsv)"
+        curl -fsS --max-time 30 "https://$HOST/" || echo "smoke test: endpoint not reachable (may require a function route)"

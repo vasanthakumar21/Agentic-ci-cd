@@ -1,0 +1,31 @@
+{
+  "name": "minimal-svc-pipeline",
+  "properties": {
+    "activities": [
+      {
+        "inputs": [
+          {
+            "referenceName": "minimal-svc-dataset",
+            "type": "DatasetReference"
+          }
+        ],
+        "name": "Copy",
+        "outputs": [
+          {
+            "referenceName": "minimal-svc-dataset",
+            "type": "DatasetReference"
+          }
+        ],
+        "type": "Copy",
+        "typeProperties": {
+          "sink": {
+            "type": "ParquetSink"
+          },
+          "source": {
+            "type": "ParquetSource"
+          }
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+# Lambda service — ONLY the keys unique to this service.
+# version, ci_vendor, cloud are inherited from ../../pipeline.base.yaml.
+target_platform: aws-lambda
+project:
+  name: sales-file-check
+  language: python
+environments:
+  - name: dev
+    gate: auto
+    protection: none
+stages:
+  # A clean CI runner has no project deps; install them (if any) and only run
+  # pytest when tests exist, so the stage is green on a fresh runner.
+  - id: test
+    runs: >-
+      python -m pip install --quiet -r requirements.txt pytest 2>/dev/null || true;
+      if ls tests/*.py test_*.py 2>/dev/null | grep -q .; then pytest -q; else
+      echo "no tests found; skipping"; fi
+  - id: build
+    runs: echo "building lambda zip"
+  - id: deploy-dev
+    environment: dev

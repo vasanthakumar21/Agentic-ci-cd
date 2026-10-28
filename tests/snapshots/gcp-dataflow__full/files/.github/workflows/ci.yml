@@ -1,0 +1,120 @@
+name: full-svc CI
+"on":
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch: {}
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: SAST scan
+      run: echo 'run SAST scan'
+    - name: Secret scan
+      run: echo 'run secret scan'
+    - name: Dependency scan
+      run: echo 'run dependency scan'
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Authenticate to Google Cloud (OIDC)
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+    - name: test
+      run: |
+        echo 'Linting Dataflow Beam pipeline scripts/python (gcp-dataflow)'
+        if command -v ruff >/dev/null 2>&1; then ruff check .; else echo 'ruff not found; skipping python lint'; fi
+        make test
+    # retries=1 requested; GitHub Actions has no native job retry. Wire a step-level retry action (e.g. nick-fields/retry) if needed.
+  build:
+    name: build
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATAFLOW_BUCKET: ${{ secrets.DATAFLOW_BUCKET }}
+      DATAFLOW_TEMPLATE_KEY: ${{ secrets.DATAFLOW_TEMPLATE_KEY }}
+      GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Authenticate to Google Cloud (OIDC)
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+    - name: build
+      run: |
+        echo 'Building Dataflow job: Beam pipeline + staged (classic) template (NO image)'
+        rm -rf .dataflow_build
+        mkdir -p .dataflow_build
+        if [ -f requirements.txt ]; then pip install --target .dataflow_build/libs -r requirements.txt; else echo 'no requirements.txt; skipping extra-python-files bundle'; fi
+        if [ -f dataflow_pipeline/pipeline.py ]; then python dataflow_pipeline/pipeline.py --runner DataflowRunner --template_location .dataflow_build/dataflow-template.json; else echo 'no dataflow_pipeline/pipeline.py; expecting a template already in GCS'; fi
+        echo 'Staged Dataflow template artifact: dataflow-template.json'
+        echo 'Staging Dataflow template to GCS (gcp-dataflow) — no image push'
+        if [ -f .dataflow_build/dataflow-template.json ]; then gcloud storage cp .dataflow_build/dataflow-template.json gs://$DATAFLOW_BUCKET/$DATAFLOW_TEMPLATE_KEY --project $GCP_PROJECT; else echo 'no local template staged; assuming template already in GCS'; fi
+  deploy-dev:
+    name: deploy-dev
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      DATAFLOW_BUCKET: ${{ secrets.DATAFLOW_BUCKET }}
+      DATAFLOW_TEMPLATE_KEY: ${{ secrets.DATAFLOW_TEMPLATE_KEY }}
+      GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Authenticate to Google Cloud (OIDC)
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+    - name: deploy-dev
+      run: |
+        echo 'Launching Dataflow job from staged template (gcloud dataflow jobs run) — NO image'
+        gcloud dataflow jobs run full-svc-job --gcs-location gs://$DATAFLOW_BUCKET/$DATAFLOW_TEMPLATE_KEY --project $GCP_PROJECT --region eu-west-2 --staging-location gs://$DATAFLOW_BUCKET/staging
+        echo 'Polling Dataflow job state (gcp-dataflow)'
+        JOB_ID="$(gcloud dataflow jobs list --project $GCP_PROJECT --region eu-west-2 --filter="name=full-svc-job" --sort-by=~createTime --limit=1 --format='value(id)')"
+        while true; do STATE="$(gcloud dataflow jobs describe "$JOB_ID" --project $GCP_PROJECT --region eu-west-2 --format='value(currentState)')"; if [ "$STATE" = "JOB_STATE_DONE" ] || [ "$STATE" = "JOB_STATE_FAILED" ] || [ "$STATE" = "JOB_STATE_CANCELLED" ]; then break; fi; echo "job state: $STATE; waiting..."; sleep 10; done
+        echo "job final state: $STATE"; [ "$STATE" = "JOB_STATE_DONE" ]
+  deploy-prod:
+    name: deploy-prod
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    environment: prod
+    env:
+      DATAFLOW_BUCKET: ${{ secrets.DATAFLOW_BUCKET }}
+      DATAFLOW_TEMPLATE_KEY: ${{ secrets.DATAFLOW_TEMPLATE_KEY }}
+      GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Authenticate to Google Cloud (OIDC)
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+    - name: deploy-prod
+      run: |
+        echo 'Launching Dataflow job from staged template (gcloud dataflow jobs run) — NO image'
+        gcloud dataflow jobs run full-svc-job --gcs-location gs://$DATAFLOW_BUCKET/$DATAFLOW_TEMPLATE_KEY --project $GCP_PROJECT --region eu-west-2 --staging-location gs://$DATAFLOW_BUCKET/staging
+        echo 'Polling Dataflow job state (gcp-dataflow)'
+        JOB_ID="$(gcloud dataflow jobs list --project $GCP_PROJECT --region eu-west-2 --filter="name=full-svc-job" --sort-by=~createTime --limit=1 --format='value(id)')"
+        while true; do STATE="$(gcloud dataflow jobs describe "$JOB_ID" --project $GCP_PROJECT --region eu-west-2 --format='value(currentState)')"; if [ "$STATE" = "JOB_STATE_DONE" ] || [ "$STATE" = "JOB_STATE_FAILED" ] || [ "$STATE" = "JOB_STATE_CANCELLED" ]; then break; fi; echo "job state: $STATE; waiting..."; sleep 10; done
+        echo "job final state: $STATE"; [ "$STATE" = "JOB_STATE_DONE" ]

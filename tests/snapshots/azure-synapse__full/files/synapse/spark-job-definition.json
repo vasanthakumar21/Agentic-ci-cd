@@ -1,0 +1,23 @@
+{
+  "name": "full-svc-job",
+  "properties": {
+    "jobProperties": {
+      "driverCores": 4,
+      "driverMemory": "28g",
+      "executorCores": 4,
+      "executorMemory": "28g",
+      "file": "abfss://$SYNAPSE_FILESYSTEM@$SYNAPSE_STORAGE_ACCOUNT.dfs.core.windows.net/artifacts/full_svc/main.py",
+      "name": "full-svc-job",
+      "numExecutors": 2,
+      "pyFiles": [
+        "abfss://$SYNAPSE_FILESYSTEM@$SYNAPSE_STORAGE_ACCOUNT.dfs.core.windows.net/artifacts/full_svc/full_svc.whl"
+      ]
+    },
+    "language": "python",
+    "sparkVersion": "3.4",
+    "targetBigDataPool": {
+      "referenceName": "$SYNAPSE_SPARK_POOL",
+      "type": "BigDataPoolReference"
+    }
+  }
+}

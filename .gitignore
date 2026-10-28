@@ -1,0 +1,68 @@
+# ── Local, per-client CI/CD config (NEVER commit) ─────────────────────────────
+# R6/R9: all sensitive, client-specific values live in local files only.
+.cicd/*.local.*
+.cicd/*.local.yaml
+.cicd/*.local.yml
+.cicd/*.local.json
+# Committed example templates document every key and MUST stay tracked:
+!.cicd/*.example
+!.cicd/*.local.*.example
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+.env
+*.env
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ── Terraform (target-platform IaC) ───────────────────────────────────────────
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+*.tfplan
+*.tfplan.json
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+*.auto.tfvars
+*.auto.tfvars.json
+*.tfvars.json
+.terraformrc
+terraform.rc
+!**/terraform.tfvars.example
+
+# ── Cloud / secrets ───────────────────────────────────────────────────────────
+*.pem
+*.key
+.aws/
+secrets/
+
+# ── Generated manifest scratch (the committed manifest is tracked explicitly) ──
+# .cicd/generated.manifest.json is intentionally NOT ignored.
+
+# ── IDE / OS ──────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db

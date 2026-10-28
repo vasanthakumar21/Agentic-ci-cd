@@ -1,0 +1,58 @@
+# Snapshot fixture (task 21, design §11.8) — RICH IR (environments + oidc + scans).
+#
+# Exercises the fuller surface a real client uses: two environments (an auto dev
+# and a manual, approval-protected prod), OIDC cloud auth, security scans on the
+# test stage, per-stage timeouts/retries, thresholds, and notifications. The
+# snapshot harness OVERRIDES `ci_vendor`, `target_platform`, and `cloud.provider`
+# per render, so the axis values below are only placeholders to keep the fixture
+# independently valid — nothing here is load-bearing for the conformance matrix.
+version: 1
+ci_vendor: github
+target_platform: aws-ecs
+
+project:
+  name: full-svc
+  language: python
+
+cloud:
+  region: eu-west-2
+  auth: oidc
+
+environments:
+  - name: dev
+    gate: auto
+    protection: none
+  - name: prod
+    gate: manual
+    protection: required-approvals
+
+stages:
+  - id: test
+    enabled: true
+    timeout_minutes: 15
+    retries: 1
+    runs: make test
+    scans: [sast, secrets, dependency]
+  - id: build
+    enabled: true
+    timeout_minutes: 30
+    runs: make build
+  - id: deploy-dev
+    enabled: true
+    environment: dev
+    runs: make deploy ENV=dev
+  - id: deploy-prod
+    enabled: true
+    environment: prod
+    when: manual
+    runs: make deploy ENV=prod
+    approvals:
+      required: 2
+      from_group: platform-approvers
+
+thresholds:
+  coverage_min_percent: 80
+  max_build_minutes: 30
+
+notifications:
+  recipients: [team@example.com]

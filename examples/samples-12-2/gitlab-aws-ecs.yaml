@@ -1,0 +1,43 @@
+# Sample IR (task 12.2) — GitLab CI x AWS ECS.
+# New CI vendor (gitlab) composed with an existing target (aws-ecs).
+# Proves the gitlab plugin works end-to-end through the real loader/dispatch.
+version: 1
+ci_vendor: gitlab
+target_platform: aws-ecs
+
+project:
+  name: orders-api
+  language: python
+
+cloud:
+  provider: aws
+  region: eu-west-2
+  auth: oidc
+
+environments:
+  - name: dev
+    gate: auto
+    protection: none
+  - name: prod
+    gate: manual
+    protection: required-approvals
+
+stages:
+  - id: test
+    timeout_minutes: 15
+    retries: 1
+    runs: make test
+    scans: [sast, secrets]
+  - id: build
+    timeout_minutes: 30
+    runs: make build
+  - id: deploy-dev
+    environment: dev
+    runs: make deploy ENV=dev
+  - id: deploy-prod
+    environment: prod
+    when: manual
+    runs: make deploy ENV=prod
+    approvals:
+      required: 2
+      from_group: platform-approvers

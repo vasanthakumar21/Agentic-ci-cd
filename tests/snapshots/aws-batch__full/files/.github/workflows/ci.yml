@@ -1,0 +1,125 @@
+name: full-svc CI
+"on":
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch: {}
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: SAST scan
+      run: echo 'run SAST scan'
+    - name: Secret scan
+      run: echo 'run secret scan'
+    - name: Dependency scan
+      run: echo 'run dependency scan'
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: test
+      run: |
+        echo 'Linting Dockerfile (aws-batch)'
+        if command -v hadolint >/dev/null 2>&1; then hadolint Dockerfile; else echo 'hadolint not found; skipping Dockerfile lint'; fi
+        make test
+    # retries=1 requested; GitHub Actions has no native job retry. Wire a step-level retry action (e.g. nick-fields/retry) if needed.
+  build:
+    name: build
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ECR_REPO: ${{ secrets.ECR_REPO }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: build
+      run: |
+        echo 'Building container image (aws-batch)'
+        docker build -t $ECR_REPO:$IMAGE_TAG -f Dockerfile .
+        echo 'Pushing image to ECR (aws-batch)'
+        ECR_REGISTRY="$(echo $ECR_REPO | cut -d'/' -f1)"
+        aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+        docker push $ECR_REPO:$IMAGE_TAG
+  deploy-dev:
+    name: deploy-dev
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      BATCH_JOB_DEFINITION: ${{ secrets.BATCH_JOB_DEFINITION }}
+      BATCH_JOB_ID: ${{ secrets.BATCH_JOB_ID }}
+      BATCH_JOB_QUEUE: ${{ secrets.BATCH_JOB_QUEUE }}
+      ECR_REPO: ${{ secrets.ECR_REPO }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: deploy-dev
+      run: |
+        echo 'Deploying to AWS Batch (register job definition) — NO ECS service'
+        NEW_IMAGE="$ECR_REPO:$IMAGE_TAG"
+        python -c "import json,os; d=json.load(open('batch/batch-job-definition.json')); d['containerProperties']['image']=os.environ['NEW_IMAGE']; [d.pop(k,None) for k in ('jobDefinitionArn','revision','status')]; json.dump(d, open('batch-job-definition-new.json','w'))"
+        aws batch register-job-definition --region eu-west-2 --cli-input-json file://batch-job-definition-new.json
+        echo 'Submitting AWS Batch job and polling status (aws-batch)'
+        BATCH_JOB_ID="$(aws batch submit-job --job-name $BATCH_JOB_DEFINITION-verify --job-queue $BATCH_JOB_QUEUE --job-definition $BATCH_JOB_DEFINITION --region eu-west-2 --query 'jobId' --output text)"
+        while true; do STATUS="$(aws batch describe-jobs --jobs "$BATCH_JOB_ID" --region eu-west-2 --query 'jobs[0].status' --output text)"; if [ "$STATUS" = "SUCCEEDED" ] || [ "$STATUS" = "FAILED" ]; then break; fi; echo "job status: $STATUS; waiting..."; sleep 10; done
+        echo "job final status: $STATUS"; [ "$STATUS" = "SUCCEEDED" ]
+  deploy-prod:
+    name: deploy-prod
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    environment: prod
+    env:
+      BATCH_JOB_DEFINITION: ${{ secrets.BATCH_JOB_DEFINITION }}
+      BATCH_JOB_ID: ${{ secrets.BATCH_JOB_ID }}
+      BATCH_JOB_QUEUE: ${{ secrets.BATCH_JOB_QUEUE }}
+      ECR_REPO: ${{ secrets.ECR_REPO }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: deploy-prod
+      run: |
+        echo 'Deploying to AWS Batch (register job definition) — NO ECS service'
+        NEW_IMAGE="$ECR_REPO:$IMAGE_TAG"
+        python -c "import json,os; d=json.load(open('batch/batch-job-definition.json')); d['containerProperties']['image']=os.environ['NEW_IMAGE']; [d.pop(k,None) for k in ('jobDefinitionArn','revision','status')]; json.dump(d, open('batch-job-definition-new.json','w'))"
+        aws batch register-job-definition --region eu-west-2 --cli-input-json file://batch-job-definition-new.json
+        echo 'Submitting AWS Batch job and polling status (aws-batch)'
+        BATCH_JOB_ID="$(aws batch submit-job --job-name $BATCH_JOB_DEFINITION-verify --job-queue $BATCH_JOB_QUEUE --job-definition $BATCH_JOB_DEFINITION --region eu-west-2 --query 'jobId' --output text)"
+        while true; do STATUS="$(aws batch describe-jobs --jobs "$BATCH_JOB_ID" --region eu-west-2 --query 'jobs[0].status' --output text)"; if [ "$STATUS" = "SUCCEEDED" ] || [ "$STATUS" = "FAILED" ]; then break; fi; echo "job status: $STATUS; waiting..."; sleep 10; done
+        echo "job final status: $STATUS"; [ "$STATUS" = "SUCCEEDED" ]

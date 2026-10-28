@@ -1,0 +1,18 @@
+{
+  "Command": {
+    "Name": "glueetl",
+    "PythonVersion": "3",
+    "ScriptLocation": "s3://$GLUE_SCRIPT_BUCKET/$GLUE_SCRIPT_KEY"
+  },
+  "DefaultArguments": {
+    "--enable-continuous-cloudwatch-log": "true",
+    "--enable-metrics": "true",
+    "--extra-py-files": "s3://$GLUE_SCRIPT_BUCKET/$GLUE_EXTRA_LIBS_KEY",
+    "--job-language": "python"
+  },
+  "GlueVersion": "4.0",
+  "Name": "minimal-svc-job",
+  "NumberOfWorkers": 2,
+  "Role": "$GLUE_ROLE_ARN",
+  "WorkerType": "G.1X"
+}

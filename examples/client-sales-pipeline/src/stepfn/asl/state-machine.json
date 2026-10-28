@@ -1,0 +1,74 @@
+{
+  "Comment": "Check today's sales files and trigger Glue cleanup if CSV files found",
+  "StartAt": "CheckTodaysFiles",
+  "States": {
+    "CheckTodaysFiles": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:ap-southeast-2:936706106045:function:sales-file-check",
+      "Next": "FilesFound?",
+      "ResultPath": "$.check_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+
+    "FilesFound?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.check_result.csv_found",
+          "BooleanEquals": true,
+          "Next": "RunGlueJob"
+        }
+      ],
+      "Default": "NoFilesToProcess"
+    },
+
+    "RunGlueJob": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "sales-cleanup-job",
+        "Arguments": {
+          "--INPUT_PATH.$": "$.check_result.s3_path"
+        }
+      },
+      "ResultPath": "$.glue_result",
+      "End": true,
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+
+    "NoFilesToProcess": {
+      "Type": "Pass",
+      "Result": {
+        "status": "no_files",
+        "message": "No CSV files found for today — nothing to process"
+      },
+      "End": true
+    },
+
+    "HandleError": {
+      "Type": "Fail",
+      "ErrorPath": "$.error.Cause",
+      "CausePath": "$.error.Cause"
+    }
+  }
+}

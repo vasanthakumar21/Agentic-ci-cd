@@ -1,0 +1,55 @@
+# Sample IR (pipeline.yaml) — client: Azure DevOps x Databricks.
+# Validates against ir/pipeline.schema.json. Demonstrates the two independent
+# axes: ci_vendor (where it runs) x target_platform (what it deploys).
+version: 1
+ci_vendor: azure-devops          # github | gitlab | azure-devops | bitbucket | jenkins
+target_platform: databricks      # aws-ecs | databricks | azure-functions | kubernetes
+
+project:
+  name: my-service
+  language: python
+
+cloud:
+  provider: azure                # aws | azure | gcp (driven by target_platform)
+  region: uksouth
+  auth: oidc                     # oidc | keys (keys discouraged)
+
+environments:
+  - name: dev
+    gate: auto
+    protection: none
+  - name: prod
+    gate: manual
+    protection: required-approvals
+
+stages:                          # array order = pipeline order
+  - id: test
+    enabled: true
+    timeout_minutes: 15
+    retries: 1
+    runs: make test
+  - id: security
+    enabled: true
+    scans: [sast, secrets, dependency]
+  - id: build
+    enabled: true
+    timeout_minutes: 30
+    runs: make build
+  - id: deploy-dev
+    enabled: true
+    environment: dev
+    runs: make deploy ENV=dev
+  - id: deploy-prod
+    enabled: true
+    environment: prod
+    when: manual
+    approvals:
+      required: 2
+      from_group: platform-approvers   # resolved from .cicd/*.local.yaml
+
+thresholds:
+  coverage_min_percent: 80
+  max_build_minutes: 30
+
+notifications:
+  recipients: [team@example.com]

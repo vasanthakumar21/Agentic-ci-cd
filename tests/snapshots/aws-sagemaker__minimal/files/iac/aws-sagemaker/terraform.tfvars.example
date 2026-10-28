@@ -1,0 +1,17 @@
+# Example tfvars for the aws-sagemaker backing infrastructure (generated).
+# Copy to terraform.tfvars and fill with your real (git-ignored) values.
+# NO secrets or real account specifics belong in the committed example (R6).
+
+aws_region   = "us-east-1"
+project_name = "minimal-svc"
+image_tag    = "latest"
+
+# Where the trained model artifact lives + endpoint sizing (override as needed).
+model_artifact_key = "sagemaker/models/model.tar.gz"
+instance_type      = "ml.m5.large"
+instance_count     = 1
+
+# CI OIDC trust — scope the subject to your repo/branch.
+oidc_provider_url = "https://token.actions.githubusercontent.com"
+oidc_subject      = "repo:your-org/your-repo:ref:refs/heads/main"
+oidc_client_id_list = ["sts.amazonaws.com"]

@@ -1,0 +1,10 @@
+{
+  "paths": [
+    ".github/workflows/ci.yml",
+    "dataflow/dataflow-template.json",
+    "iac/gcp-dataflow/main.tf",
+    "iac/gcp-dataflow/outputs.tf",
+    "iac/gcp-dataflow/terraform.tfvars.example",
+    "iac/gcp-dataflow/variables.tf"
+  ]
+}

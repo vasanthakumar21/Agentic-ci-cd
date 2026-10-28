@@ -1,0 +1,32 @@
+# Snapshot fixture (task 21, design §11.8) — MINIMAL IR.
+#
+# The smallest coherent pipeline: one test stage, one build stage, one auto-gated
+# deploy into a single environment. No approvals, no scans, no promotion. The
+# snapshot harness OVERRIDES `ci_vendor`, `target_platform`, and `cloud.provider`
+# per render (tests/harness/snapshot.py), so the axis values below are only
+# placeholders to keep the fixture independently valid — nothing here is
+# load-bearing for the conformance matrix.
+version: 1
+ci_vendor: github
+target_platform: aws-ecs
+
+project:
+  name: minimal-svc
+  language: python
+
+cloud:
+  auth: oidc
+
+environments:
+  - name: dev
+    gate: auto
+    protection: none
+
+stages:
+  - id: test
+    runs: make test
+  - id: build
+    runs: make build
+  - id: deploy-dev
+    environment: dev
+    runs: make deploy ENV=dev

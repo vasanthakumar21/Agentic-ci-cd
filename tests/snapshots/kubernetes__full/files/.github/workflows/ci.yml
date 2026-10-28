@@ -1,0 +1,117 @@
+name: full-svc CI
+"on":
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch: {}
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: SAST scan
+      run: echo 'run SAST scan'
+    - name: Secret scan
+      run: echo 'run secret scan'
+    - name: Dependency scan
+      run: echo 'run dependency scan'
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: test
+      run: |
+        echo 'Linting Dockerfile (kubernetes)'
+        if command -v hadolint >/dev/null 2>&1; then hadolint Dockerfile; else echo 'hadolint not found; skipping Dockerfile lint'; fi
+        make test
+    # retries=1 requested; GitHub Actions has no native job retry. Wire a step-level retry action (e.g. nick-fields/retry) if needed.
+  build:
+    name: build
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      IMAGE_REPO: ${{ secrets.IMAGE_REPO }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: build
+      run: |
+        echo 'Building container image (kubernetes)'
+        docker build -t $IMAGE_REPO:$IMAGE_TAG -f Dockerfile .
+        echo 'Pushing image to container registry (kubernetes)'
+        docker push $IMAGE_REPO:$IMAGE_TAG
+  deploy-dev:
+    name: deploy-dev
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      DEPLOYMENT_NAME: ${{ secrets.DEPLOYMENT_NAME }}
+      IMAGE_REPO: ${{ secrets.IMAGE_REPO }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+      KUBE_CONTEXT: ${{ secrets.KUBE_CONTEXT }}
+      NAMESPACE: ${{ secrets.NAMESPACE }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: deploy-dev
+      run: |
+        echo 'Deploying to Kubernetes (kubernetes)'
+        if [ -d chart ] && command -v helm >/dev/null 2>&1; then helm upgrade --install $DEPLOYMENT_NAME ./chart --namespace $NAMESPACE --create-namespace --kube-context $KUBE_CONTEXT --set image.repository=$IMAGE_REPO --set image.tag=$IMAGE_TAG; else export IMAGE_REPO=$IMAGE_REPO IMAGE_TAG=$IMAGE_TAG NAMESPACE=$NAMESPACE; envsubst < iac/kubernetes/deployment.yaml | kubectl --context $KUBE_CONTEXT -n $NAMESPACE apply -f -; envsubst < iac/kubernetes/service.yaml | kubectl --context $KUBE_CONTEXT -n $NAMESPACE apply -f -; fi
+        echo 'Verifying Kubernetes rollout (kubernetes)'
+        kubectl --context $KUBE_CONTEXT rollout status deployment/$DEPLOYMENT_NAME -n $NAMESPACE --timeout=300s
+        kubectl --context $KUBE_CONTEXT get deployment/$DEPLOYMENT_NAME -n $NAMESPACE -o wide
+  deploy-prod:
+    name: deploy-prod
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    environment: prod
+    env:
+      DEPLOYMENT_NAME: ${{ secrets.DEPLOYMENT_NAME }}
+      IMAGE_REPO: ${{ secrets.IMAGE_REPO }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+      KUBE_CONTEXT: ${{ secrets.KUBE_CONTEXT }}
+      NAMESPACE: ${{ secrets.NAMESPACE }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: deploy-prod
+      run: |
+        echo 'Deploying to Kubernetes (kubernetes)'
+        if [ -d chart ] && command -v helm >/dev/null 2>&1; then helm upgrade --install $DEPLOYMENT_NAME ./chart --namespace $NAMESPACE --create-namespace --kube-context $KUBE_CONTEXT --set image.repository=$IMAGE_REPO --set image.tag=$IMAGE_TAG; else export IMAGE_REPO=$IMAGE_REPO IMAGE_TAG=$IMAGE_TAG NAMESPACE=$NAMESPACE; envsubst < iac/kubernetes/deployment.yaml | kubectl --context $KUBE_CONTEXT -n $NAMESPACE apply -f -; envsubst < iac/kubernetes/service.yaml | kubectl --context $KUBE_CONTEXT -n $NAMESPACE apply -f -; fi
+        echo 'Verifying Kubernetes rollout (kubernetes)'
+        kubectl --context $KUBE_CONTEXT rollout status deployment/$DEPLOYMENT_NAME -n $NAMESPACE --timeout=300s
+        kubectl --context $KUBE_CONTEXT get deployment/$DEPLOYMENT_NAME -n $NAMESPACE -o wide

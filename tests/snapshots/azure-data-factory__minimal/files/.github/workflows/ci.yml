@@ -1,0 +1,81 @@
+name: minimal-svc CI
+"on":
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch: {}
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Azure login (OIDC)
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    - name: test
+      run: |
+        echo 'Validating ADF JSON definitions (azure-data-factory)'
+        if command -v jq >/dev/null 2>&1; then jq empty adf/pipeline.json adf/linked-service.json adf/dataset.json; else echo 'jq not found; skipping ADF JSON validation'; fi
+        make test
+  build:
+    name: build
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      ADF_FILESYSTEM: ${{ secrets.ADF_FILESYSTEM }}
+      ADF_STORAGE_ACCOUNT: ${{ secrets.ADF_STORAGE_ACCOUNT }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Azure login (OIDC)
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    - name: build
+      run: |
+        echo 'Building ADF definitions: pipeline + linked-service + dataset (NO image)'
+        if command -v jq >/dev/null 2>&1; then jq empty adf/pipeline.json adf/linked-service.json adf/dataset.json; else echo 'jq not found; skipping ADF JSON validation'; fi
+        echo 'Uploading ADF definitions to ADLS (azure-data-factory) — no image push'
+        az storage fs file upload --account-name $ADF_STORAGE_ACCOUNT --file-system $ADF_FILESYSTEM --auth-mode login --overwrite --source adf/pipeline.json --path "minimal-svc/definitions/pipeline.json"
+        az storage fs file upload --account-name $ADF_STORAGE_ACCOUNT --file-system $ADF_FILESYSTEM --auth-mode login --overwrite --source adf/linked-service.json --path "minimal-svc/definitions/linked-service.json"
+        az storage fs file upload --account-name $ADF_STORAGE_ACCOUNT --file-system $ADF_FILESYSTEM --auth-mode login --overwrite --source adf/dataset.json --path "minimal-svc/definitions/dataset.json"
+  deploy-dev:
+    name: deploy-dev
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      ADF_NAME: ${{ secrets.ADF_NAME }}
+      AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Azure login (OIDC)
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    - name: deploy-dev
+      run: |
+        echo 'Deploying ADF pipeline (upsert via CLI) — NO image'
+        az datafactory linked-service create --factory-name $ADF_NAME --resource-group $AZURE_RESOURCE_GROUP --linked-service-name minimal-svc-linkedservice --properties @adf/linked-service.json
+        az datafactory dataset create --factory-name $ADF_NAME --resource-group $AZURE_RESOURCE_GROUP --dataset-name minimal-svc-dataset --properties @adf/dataset.json
+        az datafactory pipeline create --factory-name $ADF_NAME --resource-group $AZURE_RESOURCE_GROUP --name minimal-svc-pipeline --pipeline @adf/pipeline.json
+        echo 'Triggering ADF pipeline run and polling run status (azure-data-factory)'
+        RUN_ID="$(az datafactory pipeline create-run --factory-name $ADF_NAME --resource-group $AZURE_RESOURCE_GROUP --name minimal-svc-pipeline --query 'runId' --output tsv)"
+        while true; do STATUS="$(az datafactory pipeline-run show --factory-name $ADF_NAME --resource-group $AZURE_RESOURCE_GROUP --run-id "$RUN_ID" --query "status" --output tsv)"; if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ]; then break; fi; echo "pipeline run status: $STATUS; waiting..."; sleep 10; done
+        echo "pipeline run final status: $STATUS"; [ "$STATUS" = "Succeeded" ]

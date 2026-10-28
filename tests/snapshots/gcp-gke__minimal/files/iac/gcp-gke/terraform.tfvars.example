@@ -1,0 +1,19 @@
+# Example tfvars for the gcp-gke backing infrastructure (generated).
+# Copy to terraform.tfvars and fill with your real (git-ignored) values.
+# NO secrets or real project specifics belong in the committed example (R6).
+
+project_id   = "REPLACE_ME_PROJECT_ID"
+region       = "us-central1"
+project_name = "minimal-svc"
+
+# The existing GKE cluster the workload deploys into (referenced, not created).
+gke_cluster_name     = "REPLACE_ME-cluster"
+gke_cluster_location = "us-central1"
+
+# Workload namespace + Kubernetes ServiceAccount bound to the runtime GSA (GKE WI).
+namespace                  = "default"
+kubernetes_service_account = "minimal-svc"
+
+# CI OIDC trust — scope the WIF provider to your CI repository.
+ci_repository   = "your-org/your-repo"
+oidc_issuer_uri = "https://token.actions.githubusercontent.com"

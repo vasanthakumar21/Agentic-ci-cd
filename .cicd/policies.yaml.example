@@ -1,0 +1,82 @@
+# =============================================================================
+# .cicd/policies.yaml  —  COMMITTED ORG POLICY  (design §11.5, the 1d gate)
+# =============================================================================
+# This is the *documented template* for the org-level policy layer. Unlike the
+# `*.local.yaml` files (which hold secret VALUES and client wiring and are
+# git-ignored), `policies.yaml` is NOT secret and IS committed to version control
+# so the whole team reviews policy changes in the diff.
+#
+#     cp .cicd/policies.yaml.example .cicd/policies.yaml
+#
+# WHAT THIS FILE IS
+#   A declarative list of org rules the generator evaluates against the
+#   vendor-neutral IR (`pipeline.yaml`) BEFORE it renders any file (fail-fast,
+#   §11.0 gate 1d). A rule that the IR breaks produces a precise, value-free
+#   violation that NAMES the rule + the offending IR location (R6). A run with
+#   any violation fails and lists EVERY violation at once, so a developer fixes
+#   the IR in one pass.
+#
+# PLATFORM-BLIND (R3.4)
+#   Policies read ONLY the vendor-neutral IR; they hold no `ci_vendor` /
+#   `target_platform` knowledge. The SAME policy set therefore applies
+#   identically to `github × aws-ecs` and `azure-devops × databricks`.
+#
+# DETERMINISTIC (R5.3)
+#   The temporal rule `block_prod_deploy_friday` takes the day-of-week as an
+#   INJECTED value; generation never reads the wall clock, so output stays
+#   byte-reproducible.
+#
+# SHAPE
+#   version: 1                 # policy-document schema version (only 1 supported)
+#   policies:                  # an ordered list; every rule is evaluated
+#     - rule: <rule-name>      # one of the rules documented below
+#       params: { ... }        # rule-specific parameters
+#
+# If this file is ABSENT the gate is a no-op (backward compatible): generation
+# proceeds exactly as before Plan B. Remove rules you do not want; the file may
+# list the same rule more than once with different params.
+# =============================================================================
+
+version: 1
+
+policies:
+  # ---------------------------------------------------------------------------
+  # require_security_scan
+  #   Passes iff SOME stage's `scans` cover every scan type in `params.scans`
+  #   (the union of all stages' scans must be a superset of the required set).
+  #   ir_path reported on failure: "stages[].scans".
+  #   params:
+  #     scans: list of required scan types — any of: sast, secrets, dependency
+  # ---------------------------------------------------------------------------
+  - rule: require_security_scan
+    params:
+      scans: [sast, secrets]
+
+  # ---------------------------------------------------------------------------
+  # minimum_coverage
+  #   Passes iff `thresholds.coverage_min_percent` is present AND >= percent.
+  #   A missing threshold is a violation (the org floor is not demonstrably met).
+  #   ir_path reported on failure: "thresholds.coverage_min_percent".
+  #   params:
+  #     percent: number in [0, 100] — the minimum coverage floor
+  # ---------------------------------------------------------------------------
+  - rule: minimum_coverage
+    params:
+      percent: 80
+
+  # ---------------------------------------------------------------------------
+  # block_prod_deploy_friday
+  #   TEMPORAL rule. The day-of-week is INJECTED into evaluation (clock_day),
+  #   never read from the wall clock, so generation stays deterministic (R5.3).
+  #   Passes iff the injected day is NOT the blocked day OR the IR contains no
+  #   deploy stage targeting one of the listed (prod) environments.
+  #   ir_path reported on failure: "stages[].environment".
+  #   params:
+  #     environments: list of environment names whose deploy is blocked on the
+  #                   blocked day (typically your production environments)
+  #     day:          OPTIONAL blocked weekday name (default: "friday"). Accepts
+  #                   full names (monday..sunday), case-insensitive.
+  # ---------------------------------------------------------------------------
+  - rule: block_prod_deploy_friday
+    params:
+      environments: [prod]

@@ -1,0 +1,89 @@
+name: minimal-svc CI
+"on":
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch: {}
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: us-east-1
+    - name: test
+      run: |
+        echo 'Linting Dockerfile (aws-sagemaker)'
+        if command -v hadolint >/dev/null 2>&1; then hadolint Dockerfile; else echo 'hadolint not found; skipping Dockerfile lint'; fi
+        make test
+  build:
+    name: build
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      ECR_REPO: ${{ secrets.ECR_REPO }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: us-east-1
+    - name: build
+      run: |
+        echo 'Building SageMaker training/inference image (aws-sagemaker)'
+        docker build -t $ECR_REPO:$IMAGE_TAG -f Dockerfile .
+        echo 'Pushing image to ECR (aws-sagemaker)'
+        ECR_REGISTRY="$(echo $ECR_REPO | cut -d'/' -f1)"
+        aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+        docker push $ECR_REPO:$IMAGE_TAG
+  deploy-dev:
+    name: deploy-dev
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      DEPLOY_SUFFIX: ${{ secrets.DEPLOY_SUFFIX }}
+      ECR_REPO: ${{ secrets.ECR_REPO }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+      SAGEMAKER_ENDPOINT: ${{ secrets.SAGEMAKER_ENDPOINT }}
+      SAGEMAKER_ENDPOINT_CONFIG: ${{ secrets.SAGEMAKER_ENDPOINT_CONFIG }}
+      SAGEMAKER_INSTANCE_TYPE: ${{ secrets.SAGEMAKER_INSTANCE_TYPE }}
+      SAGEMAKER_MODEL: ${{ secrets.SAGEMAKER_MODEL }}
+      SAGEMAKER_MODEL_DATA_URL: ${{ secrets.SAGEMAKER_MODEL_DATA_URL }}
+      SAGEMAKER_ROLE_ARN: ${{ secrets.SAGEMAKER_ROLE_ARN }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: us-east-1
+    - name: deploy-dev
+      run: |
+        echo 'Deploying SageMaker model/endpoint (aws-sagemaker) — NO ECS'
+        NEW_IMAGE="$ECR_REPO:$IMAGE_TAG"
+        DEPLOY_SUFFIX="${GITHUB_SHA:-$(date +%s)}"
+        aws sagemaker create-model --region $AWS_REGION --model-name "$SAGEMAKER_MODEL-$DEPLOY_SUFFIX" --execution-role-arn $SAGEMAKER_ROLE_ARN --primary-container "Image=$NEW_IMAGE,ModelDataUrl=$SAGEMAKER_MODEL_DATA_URL"
+        aws sagemaker create-endpoint-config --region $AWS_REGION --endpoint-config-name "$SAGEMAKER_ENDPOINT_CONFIG-$DEPLOY_SUFFIX" --production-variants "VariantName=AllTraffic,ModelName=$SAGEMAKER_MODEL-$DEPLOY_SUFFIX,InitialInstanceCount=1,InstanceType=$SAGEMAKER_INSTANCE_TYPE"
+        if aws sagemaker describe-endpoint --endpoint-name $SAGEMAKER_ENDPOINT --region $AWS_REGION >/dev/null 2>&1; then aws sagemaker update-endpoint --endpoint-name $SAGEMAKER_ENDPOINT --endpoint-config-name "$SAGEMAKER_ENDPOINT_CONFIG-$DEPLOY_SUFFIX" --region $AWS_REGION; else aws sagemaker create-endpoint --endpoint-name $SAGEMAKER_ENDPOINT --endpoint-config-name "$SAGEMAKER_ENDPOINT_CONFIG-$DEPLOY_SUFFIX" --region $AWS_REGION; fi
+        echo 'Polling SageMaker endpoint status to InService (aws-sagemaker)'
+        aws sagemaker wait endpoint-in-service --endpoint-name $SAGEMAKER_ENDPOINT --region $AWS_REGION
+        STATUS="$(aws sagemaker describe-endpoint --endpoint-name $SAGEMAKER_ENDPOINT --region $AWS_REGION --query 'EndpointStatus' --output text)"
+        echo "endpoint status: $STATUS"; [ "$STATUS" = "InService" ]

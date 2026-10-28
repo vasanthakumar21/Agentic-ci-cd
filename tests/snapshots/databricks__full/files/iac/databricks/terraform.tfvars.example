@@ -1,0 +1,33 @@
+# Example tfvars for the databricks backing infrastructure (generated).
+# Copy to terraform.tfvars and fill with your real (git-ignored) values.
+# NO secrets or real workspace specifics belong in the committed example (R6).
+
+# Workspace URL + token — supply from your secret store / env, NOT committed.
+# databricks_host  = "https://your-workspace.cloud.databricks.com"
+# databricks_token = "$DATABRICKS_TOKEN"   # by reference — never a literal (R6)
+
+project_name = "full-svc"
+cloud_region = "eu-west-2"
+
+# Where the uploaded wheel lives (package verb target) — fill from your workspace.
+artifact_path = "dbfs:/FileStore/artifacts/full_svc.whl"
+package_name  = "full_svc"
+entry_point   = "main"
+
+# Unity Catalog — OPTIONAL. Set enable_unity_catalog = false for workspaces
+# without Unity Catalog (the schema + its output are then omitted entirely).
+enable_unity_catalog = true
+unity_catalog        = "main"
+
+# Optional job schedule — leave job_schedule_cron empty to run on demand (via the
+# deploy/verify verbs). Set a Quartz cron to schedule the job.
+# job_schedule_cron     = "0 0 6 * * ?"   # 06:00 daily, for example
+# job_schedule_timezone = "UTC"
+
+# Optional run-as identity — leave empty to run as the job owner.
+# run_as_user_name = "svc-ci@example.com"
+
+# Job cluster sizing (override as needed).
+# spark_version = "15.4.x-scala2.12"
+# node_type_id  = "i3.xlarge"
+# num_workers   = 2

@@ -1,0 +1,24 @@
+# Shared IR base — fields common to EVERY service in this client.
+# Each service's src/<svc>/pipeline.yaml is deep-merged ON TOP of this (service
+# keys win). Edit shared settings (CI vendor, cloud, region) in ONE place here.
+version: 1
+ci_vendor: github
+cloud:
+  provider: aws
+  region: ap-southeast-2
+  # Auth mode (see docs/auth-modes.md):
+  #   auth: oidc  -> keyless, recommended; needs an OIDC provider in the account
+  #   auth: keys  -> static access keys; use where OIDC providers are not allowed
+  auth: keys
+
+# Branch strategy — branch-per-ticket. Every ticket branch runs its own pipeline
+# so changes are monitored per ticket; PRs target main. Shared by all services.
+#
+# IMPORTANT: the ticket prefix is CLIENT-SPECIFIC, not a tool default. Set it to
+# YOUR project's issue key so branches like "<KEY>-123" trigger a run. Examples:
+#   TekFlow -> "TEK-*"   |   another client -> "JIRA-*" / "PROJ-*" / "ABC-*"
+# Change the pattern below to match your tracker; nothing in the generator
+# hard-codes any prefix.
+triggers:
+  push_branches: ["main", "PROJ-*", "feature/**"]
+  pr_branches: ["main"]

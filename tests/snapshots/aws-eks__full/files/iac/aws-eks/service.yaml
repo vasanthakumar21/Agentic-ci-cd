@@ -1,0 +1,19 @@
+# Kubernetes Service for the aws-eks target (generated — design §11.9).
+#
+# Namespace is a ${VAR} placeholder substituted at deploy time (R6).
+# Deterministic: stable key order, no timestamps (R5.3).
+apiVersion: v1
+kind: Service
+metadata:
+  name: full-svc-service
+  namespace: ${NAMESPACE}
+  labels:
+    app: full-svc
+spec:
+  type: ClusterIP
+  selector:
+    app: full-svc
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP

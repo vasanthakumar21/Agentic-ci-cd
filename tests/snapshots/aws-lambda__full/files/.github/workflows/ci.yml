@@ -1,0 +1,135 @@
+name: full-svc CI
+"on":
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch: {}
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: SAST scan
+      run: echo 'run SAST scan'
+    - name: Secret scan
+      run: echo 'run secret scan'
+    - name: Dependency scan
+      run: echo 'run dependency scan'
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: test
+      run: |
+        echo 'Linting function code (aws-lambda)'
+        if command -v ruff >/dev/null 2>&1; then ruff check .; else echo 'ruff not found; skipping function code lint'; fi
+        make test
+    # retries=1 requested; GitHub Actions has no native job retry. Wire a step-level retry action (e.g. nick-fields/retry) if needed.
+  build:
+    name: build
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LAMBDA_ARTIFACT_BUCKET: ${{ secrets.LAMBDA_ARTIFACT_BUCKET }}
+      LAMBDA_ARTIFACT_KEY: ${{ secrets.LAMBDA_ARTIFACT_KEY }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: build
+      run: |
+        echo 'Building AWS Lambda deployment zip (aws-lambda) — NO image'
+        echo 'Function source directory: .'
+        rm -rf .lambda_build lambda-package.zip
+        mkdir -p .lambda_build
+        if [ -f ./requirements.txt ]; then pip install --target .lambda_build -r ./requirements.txt; else echo 'no requirements.txt; skipping dependency install'; fi
+        cp -r ./. .lambda_build/app_src && rm -rf .lambda_build/app_src/.lambda_build .lambda_build/app_src/.git || true
+        cp -r .lambda_build/app_src/. .lambda_build/ 2>/dev/null || true
+        rm -rf .lambda_build/app_src
+        (cd .lambda_build && zip -r -X ../lambda-package.zip . -x '*.git*' -x '*.venv*')
+        echo 'Built deployment zip: lambda-package.zip'
+        echo 'Uploading Lambda zip to S3 (aws-lambda)'
+        aws s3api put-object --bucket $LAMBDA_ARTIFACT_BUCKET --key $LAMBDA_ARTIFACT_KEY --body lambda-package.zip --region eu-west-2
+  deploy-dev:
+    name: deploy-dev
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      LAMBDA_ALIAS: ${{ secrets.LAMBDA_ALIAS }}
+      LAMBDA_ARTIFACT_BUCKET: ${{ secrets.LAMBDA_ARTIFACT_BUCKET }}
+      LAMBDA_ARTIFACT_KEY: ${{ secrets.LAMBDA_ARTIFACT_KEY }}
+      LAMBDA_FUNCTION: ${{ secrets.LAMBDA_FUNCTION }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: deploy-dev
+      run: |
+        echo 'Deploying to Lambda (aws-lambda)'
+        aws lambda update-function-code --function-name $LAMBDA_FUNCTION --s3-bucket $LAMBDA_ARTIFACT_BUCKET --s3-key $LAMBDA_ARTIFACT_KEY --region eu-west-2 --publish
+        aws lambda wait function-updated --function-name $LAMBDA_FUNCTION --region eu-west-2
+        NEW_VERSION="$(aws lambda publish-version --function-name $LAMBDA_FUNCTION --region eu-west-2 --query Version --output text)"
+        aws lambda update-alias --function-name $LAMBDA_FUNCTION --name $LAMBDA_ALIAS --function-version "$NEW_VERSION" --region eu-west-2
+        echo 'Verifying Lambda function (smoke test) (aws-lambda)'
+        aws lambda wait function-updated --function-name $LAMBDA_FUNCTION --region eu-west-2
+        STATE="$(aws lambda get-function-configuration --function-name $LAMBDA_FUNCTION:$LAMBDA_ALIAS --region eu-west-2 --query State --output text)"
+        echo "function state: $STATE"; [ "$STATE" = "Active" ]
+        aws lambda invoke --function-name $LAMBDA_FUNCTION:$LAMBDA_ALIAS --payload '{}' --cli-binary-format raw-in-base64-out --region eu-west-2 lambda-smoke-out.json --query 'FunctionError' --output text > lambda-smoke-error.txt
+        if grep -q -v '^None$' lambda-smoke-error.txt && [ -s lambda-smoke-error.txt ] && ! grep -q '^None$' lambda-smoke-error.txt; then echo "smoke invocation reported a function error"; cat lambda-smoke-out.json; exit 1; else echo "smoke invocation ok"; fi
+  deploy-prod:
+    name: deploy-prod
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    environment: prod
+    env:
+      LAMBDA_ALIAS: ${{ secrets.LAMBDA_ALIAS }}
+      LAMBDA_ARTIFACT_BUCKET: ${{ secrets.LAMBDA_ARTIFACT_BUCKET }}
+      LAMBDA_ARTIFACT_KEY: ${{ secrets.LAMBDA_ARTIFACT_KEY }}
+      LAMBDA_FUNCTION: ${{ secrets.LAMBDA_FUNCTION }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: deploy-prod
+      run: |
+        echo 'Deploying to Lambda (aws-lambda)'
+        aws lambda update-function-code --function-name $LAMBDA_FUNCTION --s3-bucket $LAMBDA_ARTIFACT_BUCKET --s3-key $LAMBDA_ARTIFACT_KEY --region eu-west-2 --publish
+        aws lambda wait function-updated --function-name $LAMBDA_FUNCTION --region eu-west-2
+        NEW_VERSION="$(aws lambda publish-version --function-name $LAMBDA_FUNCTION --region eu-west-2 --query Version --output text)"
+        aws lambda update-alias --function-name $LAMBDA_FUNCTION --name $LAMBDA_ALIAS --function-version "$NEW_VERSION" --region eu-west-2
+        echo 'Verifying Lambda function (smoke test) (aws-lambda)'
+        aws lambda wait function-updated --function-name $LAMBDA_FUNCTION --region eu-west-2
+        STATE="$(aws lambda get-function-configuration --function-name $LAMBDA_FUNCTION:$LAMBDA_ALIAS --region eu-west-2 --query State --output text)"
+        echo "function state: $STATE"; [ "$STATE" = "Active" ]
+        aws lambda invoke --function-name $LAMBDA_FUNCTION:$LAMBDA_ALIAS --payload '{}' --cli-binary-format raw-in-base64-out --region eu-west-2 lambda-smoke-out.json --query 'FunctionError' --output text > lambda-smoke-error.txt
+        if grep -q -v '^None$' lambda-smoke-error.txt && [ -s lambda-smoke-error.txt ] && ! grep -q '^None$' lambda-smoke-error.txt; then echo "smoke invocation reported a function error"; cat lambda-smoke-out.json; exit 1; else echo "smoke invocation ok"; fi

@@ -1,0 +1,12 @@
+{
+  "paths": [
+    ".github/workflows/ci.yml",
+    "adf/dataset.json",
+    "adf/linked-service.json",
+    "adf/pipeline.json",
+    "iac/azure-data-factory/main.tf",
+    "iac/azure-data-factory/outputs.tf",
+    "iac/azure-data-factory/terraform.tfvars.example",
+    "iac/azure-data-factory/variables.tf"
+  ]
+}

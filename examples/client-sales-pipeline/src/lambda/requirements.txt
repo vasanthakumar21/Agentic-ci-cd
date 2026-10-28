@@ -1,0 +1,2 @@
+# boto3 ships in the AWS Lambda Python runtime, so it need not be bundled.
+# Pin extra third-party libs here if your handler imports any. Empty for now.

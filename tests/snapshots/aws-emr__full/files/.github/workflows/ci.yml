@@ -1,0 +1,126 @@
+name: full-svc CI
+"on":
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch: {}
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: SAST scan
+      run: echo 'run SAST scan'
+    - name: Secret scan
+      run: echo 'run secret scan'
+    - name: Dependency scan
+      run: echo 'run dependency scan'
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: test
+      run: |
+        echo 'Linting EMR PySpark job scripts/python (aws-emr)'
+        if command -v ruff >/dev/null 2>&1; then ruff check .; else echo 'ruff not found; skipping python lint'; fi
+        make test
+    # retries=1 requested; GitHub Actions has no native job retry. Wire a step-level retry action (e.g. nick-fields/retry) if needed.
+  build:
+    name: build
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      EMR_ARTIFACT_BUCKET: ${{ secrets.EMR_ARTIFACT_BUCKET }}
+      EMR_EXTRA_LIBS_KEY: ${{ secrets.EMR_EXTRA_LIBS_KEY }}
+      EMR_SCRIPT_KEY: ${{ secrets.EMR_SCRIPT_KEY }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: build
+      run: |
+        echo 'Building EMR job: PySpark scripts + extra python libs (NO image)'
+        rm -rf .emr_build emr-extra-python-libs.zip
+        mkdir -p .emr_build/scripts .emr_build/libs
+        if [ -d emr_jobs ]; then cp -r emr_jobs/. .emr_build/scripts/; else echo 'no emr_jobs/ dir; expecting a script already in S3'; fi
+        if [ -f requirements.txt ]; then pip install --target .emr_build/libs -r requirements.txt; else echo 'no requirements.txt; skipping py-files bundle'; fi
+        (cd .emr_build/libs && zip -r -X ../../emr-extra-python-libs.zip . -x '*.git*' -x '*.venv*')
+        echo 'Built EMR py-files archive: emr-extra-python-libs.zip'
+        echo 'Uploading EMR scripts/libs to S3 (aws-emr) — no image push'
+        aws s3api put-object --bucket $EMR_ARTIFACT_BUCKET --key $EMR_EXTRA_LIBS_KEY --body emr-extra-python-libs.zip --region eu-west-2
+        SCRIPT="$(ls .emr_build/scripts/*.py 2>/dev/null | head -n1)"; if [ -n "$SCRIPT" ]; then aws s3api put-object --bucket $EMR_ARTIFACT_BUCKET --key $EMR_SCRIPT_KEY --body "$SCRIPT" --region eu-west-2; else echo 'no local script staged; assuming script already in S3'; fi
+  deploy-dev:
+    name: deploy-dev
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      EMR_APPLICATION_ID: ${{ secrets.EMR_APPLICATION_ID }}
+      EMR_JOB_RUN_ID: ${{ secrets.EMR_JOB_RUN_ID }}
+      EMR_ROLE_ARN: ${{ secrets.EMR_ROLE_ARN }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: deploy-dev
+      run: |
+        echo 'Deploying EMR Serverless job run (start-job-run via CLI) — NO ECS'
+        aws emr-serverless start-application --application-id $EMR_APPLICATION_ID --region eu-west-2 2>/dev/null || true
+        EMR_JOB_RUN_ID="$(aws emr-serverless start-job-run --application-id $EMR_APPLICATION_ID --execution-role-arn $EMR_ROLE_ARN --region eu-west-2 --job-driver "$(cat emr/emr-job.json)" --query 'jobRunId' --output text)"
+        echo "Started EMR job run: $EMR_JOB_RUN_ID"
+        echo 'Polling EMR Serverless job-run state (aws-emr)'
+        if [ -z "${EMR_JOB_RUN_ID:-}" ]; then EMR_JOB_RUN_ID="$(aws emr-serverless start-job-run --application-id $EMR_APPLICATION_ID --execution-role-arn $EMR_ROLE_ARN --region eu-west-2 --job-driver "$(cat emr/emr-job.json)" --query 'jobRunId' --output text)"; fi
+        while true; do STATE="$(aws emr-serverless get-job-run --application-id $EMR_APPLICATION_ID --job-run-id "$EMR_JOB_RUN_ID" --region eu-west-2 --query 'jobRun.state' --output text)"; if [ "$STATE" = "SUCCESS" ] || [ "$STATE" = "FAILED" ] || [ "$STATE" = "CANCELLED" ] || [ "$STATE" = "CANCELLING" ]; then break; fi; echo "job run state: $STATE; waiting..."; sleep 10; done
+        echo "job run final state: $STATE"; [ "$STATE" = "SUCCESS" ]
+  deploy-prod:
+    name: deploy-prod
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    environment: prod
+    env:
+      EMR_APPLICATION_ID: ${{ secrets.EMR_APPLICATION_ID }}
+      EMR_JOB_RUN_ID: ${{ secrets.EMR_JOB_RUN_ID }}
+      EMR_ROLE_ARN: ${{ secrets.EMR_ROLE_ARN }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: deploy-prod
+      run: |
+        echo 'Deploying EMR Serverless job run (start-job-run via CLI) — NO ECS'
+        aws emr-serverless start-application --application-id $EMR_APPLICATION_ID --region eu-west-2 2>/dev/null || true
+        EMR_JOB_RUN_ID="$(aws emr-serverless start-job-run --application-id $EMR_APPLICATION_ID --execution-role-arn $EMR_ROLE_ARN --region eu-west-2 --job-driver "$(cat emr/emr-job.json)" --query 'jobRunId' --output text)"
+        echo "Started EMR job run: $EMR_JOB_RUN_ID"
+        echo 'Polling EMR Serverless job-run state (aws-emr)'
+        if [ -z "${EMR_JOB_RUN_ID:-}" ]; then EMR_JOB_RUN_ID="$(aws emr-serverless start-job-run --application-id $EMR_APPLICATION_ID --execution-role-arn $EMR_ROLE_ARN --region eu-west-2 --job-driver "$(cat emr/emr-job.json)" --query 'jobRunId' --output text)"; fi
+        while true; do STATE="$(aws emr-serverless get-job-run --application-id $EMR_APPLICATION_ID --job-run-id "$EMR_JOB_RUN_ID" --region eu-west-2 --query 'jobRun.state' --output text)"; if [ "$STATE" = "SUCCESS" ] || [ "$STATE" = "FAILED" ] || [ "$STATE" = "CANCELLED" ] || [ "$STATE" = "CANCELLING" ]; then break; fi; echo "job run state: $STATE; waiting..."; sleep 10; done
+        echo "job run final state: $STATE"; [ "$STATE" = "SUCCESS" ]

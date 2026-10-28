@@ -1,0 +1,86 @@
+name: minimal-svc CI
+"on":
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch: {}
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Authenticate to Google Cloud (OIDC)
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+    - name: test
+      run: |
+        echo 'Linting Dockerfile (gcp-gke)'
+        if command -v hadolint >/dev/null 2>&1; then hadolint Dockerfile; else echo 'hadolint not found; skipping Dockerfile lint'; fi
+        make test
+  build:
+    name: build
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      AR_REPO: ${{ secrets.AR_REPO }}
+      GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+      GCP_REGION: ${{ secrets.GCP_REGION }}
+      IMAGE_NAME: ${{ secrets.IMAGE_NAME }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Authenticate to Google Cloud (OIDC)
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+    - name: build
+      run: |
+        echo 'Building container image (gcp-gke)'
+        docker build -t $GCP_REGION-docker.pkg.dev/$GCP_PROJECT/$AR_REPO/$IMAGE_NAME:$IMAGE_TAG -f Dockerfile .
+        echo 'Pushing image to Google Artifact Registry (gcp-gke)'
+        gcloud auth configure-docker $GCP_REGION-docker.pkg.dev --quiet
+        docker push $GCP_REGION-docker.pkg.dev/$GCP_PROJECT/$AR_REPO/$IMAGE_NAME:$IMAGE_TAG
+  deploy-dev:
+    name: deploy-dev
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      AR_REPO: ${{ secrets.AR_REPO }}
+      DEPLOYMENT_NAME: ${{ secrets.DEPLOYMENT_NAME }}
+      GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+      GCP_REGION: ${{ secrets.GCP_REGION }}
+      GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
+      GKE_LOCATION: ${{ secrets.GKE_LOCATION }}
+      IMAGE_NAME: ${{ secrets.IMAGE_NAME }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+      KUBE_CONTEXT: ${{ secrets.KUBE_CONTEXT }}
+      NAMESPACE: ${{ secrets.NAMESPACE }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Authenticate to Google Cloud (OIDC)
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+    - name: deploy-dev
+      run: |
+        echo 'Deploying to GKE (gcp-gke)'
+        gcloud container clusters get-credentials $GKE_CLUSTER --location $GKE_LOCATION --project $GCP_PROJECT
+        if [ -d chart ] && command -v helm >/dev/null 2>&1; then helm upgrade --install $DEPLOYMENT_NAME ./chart --namespace $NAMESPACE --create-namespace --kube-context $KUBE_CONTEXT --set image.repository=$GCP_REGION-docker.pkg.dev/$GCP_PROJECT/$AR_REPO/$IMAGE_NAME --set image.tag=$IMAGE_TAG; else export IMAGE_REF=$GCP_REGION-docker.pkg.dev/$GCP_PROJECT/$AR_REPO/$IMAGE_NAME:$IMAGE_TAG NAMESPACE=$NAMESPACE; envsubst < iac/gcp-gke/serviceaccount.yaml | kubectl --context $KUBE_CONTEXT -n $NAMESPACE apply -f -; envsubst < iac/gcp-gke/deployment.yaml | kubectl --context $KUBE_CONTEXT -n $NAMESPACE apply -f -; envsubst < iac/gcp-gke/service.yaml | kubectl --context $KUBE_CONTEXT -n $NAMESPACE apply -f -; fi
+        echo 'Verifying GKE rollout (gcp-gke)'
+        kubectl --context $KUBE_CONTEXT rollout status deployment/$DEPLOYMENT_NAME -n $NAMESPACE --timeout=300s
+        kubectl --context $KUBE_CONTEXT get deployment/$DEPLOYMENT_NAME -n $NAMESPACE -o wide

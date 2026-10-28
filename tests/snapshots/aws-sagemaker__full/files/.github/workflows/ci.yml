@@ -1,0 +1,137 @@
+name: full-svc CI
+"on":
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch: {}
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: SAST scan
+      run: echo 'run SAST scan'
+    - name: Secret scan
+      run: echo 'run secret scan'
+    - name: Dependency scan
+      run: echo 'run dependency scan'
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: test
+      run: |
+        echo 'Linting Dockerfile (aws-sagemaker)'
+        if command -v hadolint >/dev/null 2>&1; then hadolint Dockerfile; else echo 'hadolint not found; skipping Dockerfile lint'; fi
+        make test
+    # retries=1 requested; GitHub Actions has no native job retry. Wire a step-level retry action (e.g. nick-fields/retry) if needed.
+  build:
+    name: build
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ECR_REPO: ${{ secrets.ECR_REPO }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: build
+      run: |
+        echo 'Building SageMaker training/inference image (aws-sagemaker)'
+        docker build -t $ECR_REPO:$IMAGE_TAG -f Dockerfile .
+        echo 'Pushing image to ECR (aws-sagemaker)'
+        ECR_REGISTRY="$(echo $ECR_REPO | cut -d'/' -f1)"
+        aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+        docker push $ECR_REPO:$IMAGE_TAG
+  deploy-dev:
+    name: deploy-dev
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      DEPLOY_SUFFIX: ${{ secrets.DEPLOY_SUFFIX }}
+      ECR_REPO: ${{ secrets.ECR_REPO }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+      SAGEMAKER_ENDPOINT: ${{ secrets.SAGEMAKER_ENDPOINT }}
+      SAGEMAKER_ENDPOINT_CONFIG: ${{ secrets.SAGEMAKER_ENDPOINT_CONFIG }}
+      SAGEMAKER_INSTANCE_TYPE: ${{ secrets.SAGEMAKER_INSTANCE_TYPE }}
+      SAGEMAKER_MODEL: ${{ secrets.SAGEMAKER_MODEL }}
+      SAGEMAKER_MODEL_DATA_URL: ${{ secrets.SAGEMAKER_MODEL_DATA_URL }}
+      SAGEMAKER_ROLE_ARN: ${{ secrets.SAGEMAKER_ROLE_ARN }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: deploy-dev
+      run: |
+        echo 'Deploying SageMaker model/endpoint (aws-sagemaker) — NO ECS'
+        NEW_IMAGE="$ECR_REPO:$IMAGE_TAG"
+        DEPLOY_SUFFIX="${GITHUB_SHA:-$(date +%s)}"
+        aws sagemaker create-model --region eu-west-2 --model-name "$SAGEMAKER_MODEL-$DEPLOY_SUFFIX" --execution-role-arn $SAGEMAKER_ROLE_ARN --primary-container "Image=$NEW_IMAGE,ModelDataUrl=$SAGEMAKER_MODEL_DATA_URL"
+        aws sagemaker create-endpoint-config --region eu-west-2 --endpoint-config-name "$SAGEMAKER_ENDPOINT_CONFIG-$DEPLOY_SUFFIX" --production-variants "VariantName=AllTraffic,ModelName=$SAGEMAKER_MODEL-$DEPLOY_SUFFIX,InitialInstanceCount=1,InstanceType=$SAGEMAKER_INSTANCE_TYPE"
+        if aws sagemaker describe-endpoint --endpoint-name $SAGEMAKER_ENDPOINT --region eu-west-2 >/dev/null 2>&1; then aws sagemaker update-endpoint --endpoint-name $SAGEMAKER_ENDPOINT --endpoint-config-name "$SAGEMAKER_ENDPOINT_CONFIG-$DEPLOY_SUFFIX" --region eu-west-2; else aws sagemaker create-endpoint --endpoint-name $SAGEMAKER_ENDPOINT --endpoint-config-name "$SAGEMAKER_ENDPOINT_CONFIG-$DEPLOY_SUFFIX" --region eu-west-2; fi
+        echo 'Polling SageMaker endpoint status to InService (aws-sagemaker)'
+        aws sagemaker wait endpoint-in-service --endpoint-name $SAGEMAKER_ENDPOINT --region eu-west-2
+        STATUS="$(aws sagemaker describe-endpoint --endpoint-name $SAGEMAKER_ENDPOINT --region eu-west-2 --query 'EndpointStatus' --output text)"
+        echo "endpoint status: $STATUS"; [ "$STATUS" = "InService" ]
+  deploy-prod:
+    name: deploy-prod
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    environment: prod
+    env:
+      DEPLOY_SUFFIX: ${{ secrets.DEPLOY_SUFFIX }}
+      ECR_REPO: ${{ secrets.ECR_REPO }}
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG }}
+      SAGEMAKER_ENDPOINT: ${{ secrets.SAGEMAKER_ENDPOINT }}
+      SAGEMAKER_ENDPOINT_CONFIG: ${{ secrets.SAGEMAKER_ENDPOINT_CONFIG }}
+      SAGEMAKER_INSTANCE_TYPE: ${{ secrets.SAGEMAKER_INSTANCE_TYPE }}
+      SAGEMAKER_MODEL: ${{ secrets.SAGEMAKER_MODEL }}
+      SAGEMAKER_MODEL_DATA_URL: ${{ secrets.SAGEMAKER_MODEL_DATA_URL }}
+      SAGEMAKER_ROLE_ARN: ${{ secrets.SAGEMAKER_ROLE_ARN }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: eu-west-2
+    - name: deploy-prod
+      run: |
+        echo 'Deploying SageMaker model/endpoint (aws-sagemaker) — NO ECS'
+        NEW_IMAGE="$ECR_REPO:$IMAGE_TAG"
+        DEPLOY_SUFFIX="${GITHUB_SHA:-$(date +%s)}"
+        aws sagemaker create-model --region eu-west-2 --model-name "$SAGEMAKER_MODEL-$DEPLOY_SUFFIX" --execution-role-arn $SAGEMAKER_ROLE_ARN --primary-container "Image=$NEW_IMAGE,ModelDataUrl=$SAGEMAKER_MODEL_DATA_URL"
+        aws sagemaker create-endpoint-config --region eu-west-2 --endpoint-config-name "$SAGEMAKER_ENDPOINT_CONFIG-$DEPLOY_SUFFIX" --production-variants "VariantName=AllTraffic,ModelName=$SAGEMAKER_MODEL-$DEPLOY_SUFFIX,InitialInstanceCount=1,InstanceType=$SAGEMAKER_INSTANCE_TYPE"
+        if aws sagemaker describe-endpoint --endpoint-name $SAGEMAKER_ENDPOINT --region eu-west-2 >/dev/null 2>&1; then aws sagemaker update-endpoint --endpoint-name $SAGEMAKER_ENDPOINT --endpoint-config-name "$SAGEMAKER_ENDPOINT_CONFIG-$DEPLOY_SUFFIX" --region eu-west-2; else aws sagemaker create-endpoint --endpoint-name $SAGEMAKER_ENDPOINT --endpoint-config-name "$SAGEMAKER_ENDPOINT_CONFIG-$DEPLOY_SUFFIX" --region eu-west-2; fi
+        echo 'Polling SageMaker endpoint status to InService (aws-sagemaker)'
+        aws sagemaker wait endpoint-in-service --endpoint-name $SAGEMAKER_ENDPOINT --region eu-west-2
+        STATUS="$(aws sagemaker describe-endpoint --endpoint-name $SAGEMAKER_ENDPOINT --region eu-west-2 --query 'EndpointStatus' --output text)"
+        echo "endpoint status: $STATUS"; [ "$STATUS" = "InService" ]

@@ -1,0 +1,123 @@
+name: full-svc CI
+"on":
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch: {}
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: SAST scan
+      run: echo 'run SAST scan'
+    - name: Secret scan
+      run: echo 'run secret scan'
+    - name: Dependency scan
+      run: echo 'run dependency scan'
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Authenticate to Google Cloud (OIDC)
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+    - name: test
+      run: |
+        echo 'Linting Dataproc PySpark job scripts/python (gcp-dataproc)'
+        if command -v ruff >/dev/null 2>&1; then ruff check .; else echo 'ruff not found; skipping python lint'; fi
+        make test
+    # retries=1 requested; GitHub Actions has no native job retry. Wire a step-level retry action (e.g. nick-fields/retry) if needed.
+  build:
+    name: build
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATAPROC_EXTRA_LIBS_KEY: ${{ secrets.DATAPROC_EXTRA_LIBS_KEY }}
+      DATAPROC_MAIN_SCRIPT_KEY: ${{ secrets.DATAPROC_MAIN_SCRIPT_KEY }}
+      DATAPROC_STAGING_BUCKET: ${{ secrets.DATAPROC_STAGING_BUCKET }}
+      GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Authenticate to Google Cloud (OIDC)
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+    - name: build
+      run: |
+        echo 'Building Dataproc batch: PySpark scripts + extra python libs (NO image)'
+        rm -rf .dataproc_build dataproc-extra-python-libs.zip
+        mkdir -p .dataproc_build/scripts .dataproc_build/libs
+        if [ -d dataproc_jobs ]; then cp -r dataproc_jobs/. .dataproc_build/scripts/; else echo 'no dataproc_jobs/ dir; expecting a script already in GCS'; fi
+        if [ -f requirements.txt ]; then pip install --target .dataproc_build/libs -r requirements.txt; else echo 'no requirements.txt; skipping extra-python-files bundle'; fi
+        (cd .dataproc_build/libs && zip -r -X ../../dataproc-extra-python-libs.zip . -x '*.git*' -x '*.venv*')
+        echo 'Built Dataproc python-file-uris archive: dataproc-extra-python-libs.zip'
+        echo 'Uploading Dataproc scripts/libs to GCS (gcp-dataproc) — no image push'
+        gcloud storage cp dataproc-extra-python-libs.zip gs://$DATAPROC_STAGING_BUCKET/$DATAPROC_EXTRA_LIBS_KEY --project $GCP_PROJECT
+        SCRIPT="$(ls .dataproc_build/scripts/*.py 2>/dev/null | head -n1)"; if [ -n "$SCRIPT" ]; then gcloud storage cp "$SCRIPT" gs://$DATAPROC_STAGING_BUCKET/$DATAPROC_MAIN_SCRIPT_KEY --project $GCP_PROJECT; else echo 'no local script staged; assuming script already in GCS'; fi
+  deploy-dev:
+    name: deploy-dev
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      DATAPROC_EXTRA_LIBS_KEY: ${{ secrets.DATAPROC_EXTRA_LIBS_KEY }}
+      DATAPROC_MAIN_SCRIPT_KEY: ${{ secrets.DATAPROC_MAIN_SCRIPT_KEY }}
+      DATAPROC_STAGING_BUCKET: ${{ secrets.DATAPROC_STAGING_BUCKET }}
+      GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Authenticate to Google Cloud (OIDC)
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+    - name: deploy-dev
+      run: |
+        echo 'Submitting Dataproc PySpark batch (gcloud dataproc batches submit) — NO image'
+        gcloud dataproc batches submit pyspark gs://$DATAPROC_STAGING_BUCKET/$DATAPROC_MAIN_SCRIPT_KEY --batch full-svc-batch --project $GCP_PROJECT --region eu-west-2 --py-files gs://$DATAPROC_STAGING_BUCKET/$DATAPROC_EXTRA_LIBS_KEY
+        echo 'Polling Dataproc batch state (gcp-dataproc)'
+        while true; do STATE="$(gcloud dataproc batches describe full-svc-batch --project $GCP_PROJECT --region eu-west-2 --format='value(state)')"; if [ "$STATE" = "SUCCEEDED" ] || [ "$STATE" = "FAILED" ] || [ "$STATE" = "CANCELLED" ]; then break; fi; echo "batch state: $STATE; waiting..."; sleep 10; done
+        echo "batch final state: $STATE"; [ "$STATE" = "SUCCEEDED" ]
+  deploy-prod:
+    name: deploy-prod
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    environment: prod
+    env:
+      DATAPROC_EXTRA_LIBS_KEY: ${{ secrets.DATAPROC_EXTRA_LIBS_KEY }}
+      DATAPROC_MAIN_SCRIPT_KEY: ${{ secrets.DATAPROC_MAIN_SCRIPT_KEY }}
+      DATAPROC_STAGING_BUCKET: ${{ secrets.DATAPROC_STAGING_BUCKET }}
+      GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Authenticate to Google Cloud (OIDC)
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+    - name: deploy-prod
+      run: |
+        echo 'Submitting Dataproc PySpark batch (gcloud dataproc batches submit) — NO image'
+        gcloud dataproc batches submit pyspark gs://$DATAPROC_STAGING_BUCKET/$DATAPROC_MAIN_SCRIPT_KEY --batch full-svc-batch --project $GCP_PROJECT --region eu-west-2 --py-files gs://$DATAPROC_STAGING_BUCKET/$DATAPROC_EXTRA_LIBS_KEY
+        echo 'Polling Dataproc batch state (gcp-dataproc)'
+        while true; do STATE="$(gcloud dataproc batches describe full-svc-batch --project $GCP_PROJECT --region eu-west-2 --format='value(state)')"; if [ "$STATE" = "SUCCEEDED" ] || [ "$STATE" = "FAILED" ] || [ "$STATE" = "CANCELLED" ]; then break; fi; echo "batch state: $STATE; waiting..."; sleep 10; done
+        echo "batch final state: $STATE"; [ "$STATE" = "SUCCEEDED" ]

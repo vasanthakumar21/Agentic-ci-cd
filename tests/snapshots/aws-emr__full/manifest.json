@@ -1,0 +1,10 @@
+{
+  "paths": [
+    ".github/workflows/ci.yml",
+    "emr/emr-job.json",
+    "iac/aws-emr/main.tf",
+    "iac/aws-emr/outputs.tf",
+    "iac/aws-emr/terraform.tfvars.example",
+    "iac/aws-emr/variables.tf"
+  ]
+}

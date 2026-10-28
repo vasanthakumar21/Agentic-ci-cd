@@ -1,0 +1,16 @@
+# Example tfvars for the aws-ecs backing infrastructure (generated).
+# Copy to terraform.tfvars and fill with your real (git-ignored) values.
+# NO secrets or real account specifics belong in the committed example (R6).
+
+aws_region   = "us-east-1"
+project_name = "minimal-svc"
+image_tag    = "latest"
+
+# Per-client networking — fill from your VPC.
+subnet_ids         = ["subnet-REPLACE_ME"]
+security_group_ids = ["sg-REPLACE_ME"]
+
+# CI OIDC trust — scope the subject to your repo/branch.
+oidc_provider_url = "https://token.actions.githubusercontent.com"
+oidc_subject      = "repo:your-org/your-repo:ref:refs/heads/main"
+oidc_client_id_list = ["sts.amazonaws.com"]

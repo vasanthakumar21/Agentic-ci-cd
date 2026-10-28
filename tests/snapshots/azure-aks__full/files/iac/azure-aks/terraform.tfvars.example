@@ -1,0 +1,23 @@
+# Example tfvars for the azure-aks backing infrastructure (generated).
+# Copy to terraform.tfvars and fill with your real (git-ignored) values.
+# NO secrets or real account specifics belong in the committed example (R6).
+
+location            = "eu-west-2"
+project_name        = "full-svc"
+resource_group_name = "full-svc-rg"
+
+# The EXISTING AKS cluster the workload deploys to (referenced, not created).
+aks_cluster_name        = "full-svc-aks"
+aks_resource_group_name = "full-svc-aks-rg"
+
+# Registry tier.
+acr_sku = "Standard"
+
+# The Kubernetes ServiceAccount the workload identity is bound to.
+service_account_namespace = "default"
+service_account_name      = "full-svc-sa"
+
+# CI OIDC trust — scope the subject to your repo/branch.
+oidc_issuer_url = "https://token.actions.githubusercontent.com"
+oidc_subject    = "repo:your-org/your-repo:ref:refs/heads/main"
+oidc_audience   = "api://AzureADTokenExchange"

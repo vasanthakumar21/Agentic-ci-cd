@@ -1,0 +1,10 @@
+{
+  "paths": [
+    ".github/workflows/ci.yml",
+    "iac/aws-stepfunctions/main.tf",
+    "iac/aws-stepfunctions/outputs.tf",
+    "iac/aws-stepfunctions/terraform.tfvars.example",
+    "iac/aws-stepfunctions/variables.tf",
+    "stepfunctions/state-machine.asl.json"
+  ]
+}

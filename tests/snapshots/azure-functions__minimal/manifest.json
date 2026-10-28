@@ -1,0 +1,9 @@
+{
+  "paths": [
+    ".github/workflows/ci.yml",
+    "iac/azure-functions/main.tf",
+    "iac/azure-functions/outputs.tf",
+    "iac/azure-functions/terraform.tfvars.example",
+    "iac/azure-functions/variables.tf"
+  ]
+}

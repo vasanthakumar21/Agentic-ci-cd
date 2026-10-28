@@ -1,0 +1,15 @@
+# Example tfvars for the gcp-cloud-run backing infrastructure (generated).
+# Copy to terraform.tfvars and fill with your real (git-ignored) values.
+# NO secrets or real project specifics belong in the committed example (R6).
+
+project_id   = "REPLACE_ME_PROJECT_ID"
+region       = "us-central1"
+project_name = "minimal-svc"
+image_tag    = "latest"
+
+# CI OIDC trust — scope the WIF provider to your CI repository.
+ci_repository   = "your-org/your-repo"
+oidc_issuer_uri = "https://token.actions.githubusercontent.com"
+
+# Expose the service publicly only if you really want unauthenticated access.
+allow_unauthenticated = false
